@@ -38,7 +38,7 @@ SKIP_ECOSYSTEM_UPDATES="${SKIP_ECOSYSTEM_UPDATES:-0}"
 
 CODE_SNAPS="${AVATAR_CODE_SNAPSHOTS_DIR:-/home/appuser/backups/avatar_julia/code}"
 DB_DUMPS="${AVATAR_DB_DUMPS_DIR:-/home/appuser/backups/avatar_julia/db}"
-GIT_REMOTE_URL="${GIT_REMOTE_URL:-git@github.com:bah677/julia_avatar.git}"
+GIT_REMOTE_URL="${GIT_REMOTE_URL:-git@github.com:bah677/avatar_julia.git}"
 GIT_BRANCH="${GIT_BRANCH:-main}"
 RETENTION_SH="${KOSTYA_ROOT}/scripts/disk_retention.sh"
 UPDATES_ROOT="${KOSTYA_ROOT}/ecosystem_updates"

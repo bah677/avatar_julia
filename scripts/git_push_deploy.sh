@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Коммит и push репозитория julia_avatar в GitHub.
+# Коммит и push репозитория avatar_julia в GitHub.
 set -euo pipefail
 
 AVATAR_ROOT="${AVATAR_ROOT:-/home/appuser/dev/avatar}"
-GIT_REMOTE_URL="${GIT_REMOTE_URL:-git@github.com:bah677/julia_avatar.git}"
+GIT_REMOTE_URL="${GIT_REMOTE_URL:-git@github.com:bah677/avatar_julia.git}"
 GIT_BRANCH="${GIT_BRANCH:-main}"
 GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-bah677}"
 GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-bah677@users.noreply.github.com}"
