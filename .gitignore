@@ -18,6 +18,8 @@ data/
 log/
 chroma_data/
 exports/
+*.db
+openai_client/storage/
 
 # IDE / OS
 .cursor/
