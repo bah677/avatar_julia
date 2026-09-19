@@ -32,6 +32,18 @@ logger = logging.getLogger(__name__)
 _RETRY_MINUTES = (5, 30, 120)
 
 
+def _as_dict(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
 def _write_json(path: Path, data: Any) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
 
@@ -125,7 +137,7 @@ class CourseWorker:
         kind = src.get("kind")
         user_id = int(src.get("added_by") or 0)
         openai = self._app.openai_client
-        meta = dict(src.get("metadata") or {})
+        meta = _as_dict(src.get("metadata"))
         chars = 0
         method = ""
 

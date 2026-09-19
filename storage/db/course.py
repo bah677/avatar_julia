@@ -16,6 +16,41 @@ _STALE_FETCH = ("fetching",)
 _STALE_MINE = ("mining",)
 
 
+def _pg_json(value: Any, default: Any) -> Any:
+    """asyncpg отдаёт jsonb строкой, если кодек не задан."""
+    if value is None:
+        return default
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, (bytes, memoryview)):
+        value = bytes(value).decode("utf-8")
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return default
+    return default
+
+
+def _source_row(row: Any) -> Dict[str, Any]:
+    d = dict(row)
+    d["metadata"] = _pg_json(d.get("metadata"), {})
+    if not isinstance(d["metadata"], dict):
+        d["metadata"] = {}
+    d["alt_urls"] = _pg_json(d.get("alt_urls"), [])
+    if not isinstance(d["alt_urls"], list):
+        d["alt_urls"] = []
+    return d
+
+
+def _lesson_row(row: Any) -> Dict[str, Any]:
+    d = dict(row)
+    d["passport"] = _pg_json(d.get("passport"), {})
+    if not isinstance(d["passport"], dict):
+        d["passport"] = {}
+    return d
+
+
 class CourseMixin:
     async def upsert_course_lesson(
         self,
@@ -69,14 +104,14 @@ class CourseMixin:
                 product_id,
                 lesson_key,
             )
-        return dict(row) if row else None
+        return _lesson_row(row) if row else None
 
     async def get_course_lesson_by_id(self, lesson_id: int) -> Optional[Dict[str, Any]]:
         async with self.get_connection() as conn:
             row = await conn.fetchrow(
                 "SELECT * FROM course_lessons WHERE id = $1", int(lesson_id)
             )
-        return dict(row) if row else None
+        return _lesson_row(row) if row else None
 
     async def list_course_lessons(self, product_id: str) -> List[Dict[str, Any]]:
         async with self.get_connection() as conn:
@@ -88,7 +123,7 @@ class CourseMixin:
                 """,
                 product_id,
             )
-        return [dict(r) for r in rows]
+        return [_lesson_row(r) for r in rows]
 
     async def update_lesson_passport(
         self,
@@ -162,7 +197,7 @@ class CourseMixin:
             row = await conn.fetchrow(
                 "SELECT * FROM course_sources WHERE id = $1", source_id
             )
-        return dict(row) if row else None
+        return _source_row(row) if row else None
 
     async def get_course_source_by_video(
         self, origin: str, video_id: str
@@ -176,7 +211,7 @@ class CourseMixin:
                 origin,
                 video_id,
             )
-        return dict(row) if row else None
+        return _source_row(row) if row else None
 
     async def get_course_source_by_disk_path(self, disk_path: str) -> Optional[Dict[str, Any]]:
         async with self.get_connection() as conn:
@@ -184,7 +219,7 @@ class CourseMixin:
                 "SELECT * FROM course_sources WHERE disk_path = $1",
                 disk_path,
             )
-        return dict(row) if row else None
+        return _source_row(row) if row else None
 
     async def list_course_sources_by_product(
         self, product_ids: Sequence[str], *, statuses: Optional[Sequence[str]] = None
@@ -210,7 +245,7 @@ class CourseMixin:
                     """,
                     list(product_ids),
                 )
-        return [dict(r) for r in rows]
+        return [_source_row(r) for r in rows]
 
     async def list_course_sources_for_lesson(self, lesson_id: int) -> List[Dict[str, Any]]:
         async with self.get_connection() as conn:
@@ -222,7 +257,7 @@ class CourseMixin:
                 """,
                 int(lesson_id),
             )
-        return [dict(r) for r in rows]
+        return [_source_row(r) for r in rows]
 
     async def find_similar_video_source(
         self,
@@ -263,7 +298,7 @@ class CourseMixin:
                 hi,
                 exclude_id,
             )
-        return dict(row) if row else None
+        return _source_row(row) if row else None
 
     async def update_course_source(self, source_id: UUID, **fields: Any) -> None:
         if not fields:
@@ -337,7 +372,7 @@ class CourseMixin:
                 list(product_ids),
                 ts,
             )
-        return dict(row) if row else None
+        return _source_row(row) if row else None
 
     async def recover_stale_course_sources(self, *, older_than_min: int = 30) -> int:
         async with self.get_connection() as conn:
@@ -385,7 +420,7 @@ class CourseMixin:
                 """,
                 list(product_ids),
             )
-        return [dict(r) for r in rows]
+        return [_source_row(r) for r in rows]
 
     async def append_source_alt_url(self, source_id: UUID, url: str) -> None:
         async with self.get_connection() as conn:
