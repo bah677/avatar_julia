@@ -1,0 +1,23 @@
+"""
+Конфигурация медиапроцессора.
+"""
+
+from .settings import (
+    GLOBAL_LIMITS,
+    MEDIA_LIMITS,
+    USAGE_LIMITS,
+    TEMP_FILE_CONFIG,
+    SUPPORTED_DOCUMENT_TYPES,
+    SUPPORTED_AUDIO_TYPES,
+    SUPPORTED_VIDEO_TYPES
+)
+
+__all__ = [
+    'GLOBAL_LIMITS',
+    'MEDIA_LIMITS',
+    'USAGE_LIMITS',
+    'TEMP_FILE_CONFIG',
+    'SUPPORTED_DOCUMENT_TYPES',
+    'SUPPORTED_AUDIO_TYPES',
+    'SUPPORTED_VIDEO_TYPES'
+]

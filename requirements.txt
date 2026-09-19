@@ -1,0 +1,16 @@
+aiogram>=3.0.0
+asyncpg>=0.28.0
+python-dotenv>=1.0.0
+openai>=1.0.0
+httpx>=0.24.0
+yookassa==3.1.0
+aiofiles>=23.0.0          # для асинхронной работы с файлами
+aiohttp>=3.9.0            # для reverse geocoding (location)
+ffmpeg-python>=0.2.0      # для работы с видео (опционально, можно через subprocess)
+python-docx>=0.8.11       # для чтения .docx файлов
+PyPDF2>=3.0.0             # для чтения PDF (альтернатива pdftotext)
+apscheduler>=3.10.0
+reportlab>=4.0.0
+chromadb>=0.4.0
+tiktoken>=0.5.0
+yt-dlp>=2024.0

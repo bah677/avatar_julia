@@ -1,0 +1,7 @@
+{
+  "products": [
+    {"id": "mbt",         "name": "МБТ",              "aliases": ["мбт"],                 "disk_folder": "МБТ"},
+    {"id": "magiya",      "name": "Курс Магия",       "aliases": ["курс магия", "магия"], "disk_folder": "Курс Магия"},
+    {"id": "materinstvo", "name": "Клуб Материнство", "aliases": ["клуб материнство"],    "disk_folder": "Клуб Материнство"}
+  ]
+}
