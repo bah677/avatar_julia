@@ -1,5 +1,8 @@
 """
-Сводка по коллекции expert_materials: иерархия продукт → content_category → content_type, число чанков.
+Сводка по коллекции expert_materials: продукт → вид → тип.
+
+Старые чанки из группы: product / content_category / content_type.
+Чанки курса (v2): product_id / origin / source_kind.
 """
 
 from __future__ import annotations
@@ -51,6 +54,55 @@ def _display_label(s: str) -> str:
     return s if s else "(не задано)"
 
 
+_ORIGIN_LABELS = {
+    "disk": "Яндекс.Диск",
+    "youtube": "YouTube",
+    "vimeo": "Vimeo",
+    "kinescope": "Kinescope",
+    "telegram_legacy": "группа Telegram",
+}
+
+
+def _product_label(meta: dict) -> str:
+    pid = _norm_meta(meta.get("product_id"))
+    if pid:
+        try:
+            from course.products import product_display_name
+
+            name = (product_display_name(pid) or "").strip()
+            if name:
+                return name
+        except Exception:
+            pass
+        return pid
+    return _norm_meta(meta.get("product"))
+
+
+def _category_label(meta: dict) -> str:
+    cat = _norm_meta(meta.get("content_category"))
+    if cat:
+        return cat
+    origin = _norm_meta(meta.get("origin"))
+    if origin:
+        return _ORIGIN_LABELS.get(origin, origin)
+    return ""
+
+
+def _type_label(meta: dict) -> str:
+    ct = _norm_meta(meta.get("content_type"))
+    if ct:
+        return ct
+    kind = _norm_meta(meta.get("source_kind"))
+    if kind:
+        try:
+            from course.models import KIND_LABELS
+
+            return KIND_LABELS.get(kind, kind)
+        except Exception:
+            return kind
+    return ""
+
+
 def compute_expert_materials_statistics(
     store: VectorStoreService,
     *,
@@ -81,9 +133,9 @@ def compute_expert_materials_statistics(
             if not m:
                 continue
             total += 1
-            p = _norm_meta(m.get("product"))
-            c = _norm_meta(m.get("content_category"))
-            t = _norm_meta(m.get("content_type"))
+            p = _product_label(m)
+            c = _category_label(m)
+            t = _type_label(m)
             nested[p][c][t] += 1
         offset += len(metas)
         if len(metas) < _PAGE:
