@@ -51,5 +51,7 @@ else
 fi
 
 echo "==> [git] push origin ${GIT_BRANCH}"
-git push -u origin "${GIT_BRANCH}"
+if ! git push -u origin "${GIT_BRANCH}"; then
+  die "push не удался. Создайте пустой репозиторий ${GIT_REMOTE_URL} (без README) и повторите."
+fi
 echo "==> [git] OK: ${GIT_REMOTE_URL} (${GIT_BRANCH})"
