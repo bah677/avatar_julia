@@ -60,6 +60,8 @@ _ORIGIN_LABELS = {
     "vimeo": "Vimeo",
     "kinescope": "Kinescope",
     "telegram_legacy": "группа Telegram",
+    "telegram_group": "группа курса",
+    "telegram_stories": "сторис",
 }
 
 

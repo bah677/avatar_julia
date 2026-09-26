@@ -36,6 +36,10 @@ HELP_TEXT = (
     "<b>План</b> — кнопка «План недели»: состав на дни, можно отметить лишнее "
     "и написать выбранные.\n"
     "<b>Фокус</b> — о чём писать на этой неделе.\n"
+    "<b>Паспорта</b> — живой разговор: эксперт, продукт, запуск. Бот смотрит базу "
+    "и спрашивает только пробелы.\n"
+    "<b>Этап сторис</b> — прогрев → предзапуск → продажи → после закрытия (круг).\n"
+    "<b>Сторис в базу</b> — прошлые и текущие серии текстом, голосом или видео.\n"
     "<b>Уроки / Банк / Голос</b> — паспорт урока, карточки идей, паспорт голоса.\n"
     "<b>Очередь / Синхронизация</b> — обработка файлов и опрос Диска."
 )
@@ -52,6 +56,8 @@ def menu_keyboard(*, superadmin: bool) -> InlineKeyboardMarkup:
         [_btn("🎤 Голос", "style"), _btn("⏳ Очередь", "queue")],
         [_btn("☁️ Синхронизация Диска", "sync")],
         [_btn("✨ Новая задача", "new")],
+        [_btn("🪪 Паспорта", "passports"), _btn("🔁 Этап сторис", "cycle")],
+        [_btn("📲 Сторис в базу", "stories_up")],
         [_btn("❓ Как работать", "help")],
     ]
     if superadmin:
@@ -140,6 +146,7 @@ class MainMenuFeature(BaseFeature):
         action = (callback.data or "")[len(MENU_CB) :]
         msg = callback.message
         if action == "home":
+            await state.clear()
             if msg:
                 from bot.utils.telegram_identity import resolve_telegram_bot_display_name
 
@@ -218,6 +225,31 @@ class MainMenuFeature(BaseFeature):
             if coord:
                 await coord.on_command_new(msg, actor=callback.from_user)
             return
+        if action == "passports":
+            wiz = self._app.feature_manager.get_optional("passport_wizard")
+            if wiz:
+                await wiz.show_hub(msg)
+            return
+        if action == "cycle":
+            await self._show_cycle(msg)
+            return
+        if action.startswith("cyc:"):
+            stage = action.split(":", 1)[1]
+            from course.stories_cycle import normalize_stage, stage_title
+
+            stage = normalize_stage(stage)
+            await self._stor().set_content_setting(active_product_id(), "stories_cycle_stage", stage)
+            await msg.answer(
+                f"Этап сторис: <b>{stage_title(stage)}</b>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=back_keyboard(),
+            )
+            return
+        if action == "stories_up":
+            intake_s = self._app.feature_manager.get_optional("stories_intake")
+            if intake_s:
+                await intake_s.show_hub(msg)
+            return
         if action == "costs":
             if not is_super_admin_user_id(uid):
                 return
@@ -247,6 +279,25 @@ class MainMenuFeature(BaseFeature):
             reply_markup=kb,
         )
         await state.set_state(MenuFocusStates.waiting_text)
+
+    async def _show_cycle(self, msg: Message) -> None:
+        from course.stories_cycle import STAGES, normalize_stage, stage_title
+
+        raw = await self._stor().get_content_setting(active_product_id(), "stories_cycle_stage")
+        current = normalize_stage(raw if isinstance(raw, str) else str(raw or ""))
+        lines = [
+            "<b>Этап сторис</b>",
+            f"Сейчас: {stage_title(current)}",
+            "",
+            "Круг: прогрев → предзапуск → продажи → после закрытия → снова прогрев.",
+        ]
+        rows = [[_btn(title, f"cyc:{sid}")] for sid, title, _hint in STAGES]
+        rows.append([_btn("← Меню", "home")])
+        await msg.answer(
+            "\n".join(lines),
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        )
 
     async def try_handle_focus_text(self, message: Message, state: FSMContext, text: str) -> bool:
         uid = message.from_user.id if message.from_user else 0

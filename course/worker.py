@@ -164,6 +164,17 @@ class CourseWorker:
             })
             chars = sum(len(s.text) for s in segs)
             meta["text_method"] = method
+            if chars <= 0:
+                hint = ""
+                if origin == "vimeo":
+                    hint = (
+                        " Нужен VIMEO_ACCESS_TOKEN аккаунта-владельца "
+                        "со scope public, private, video_files "
+                        "(https://developer.vimeo.com/apps)."
+                    )
+                raise RuntimeError(
+                    f"Пустая расшифровка ({origin}, method={method or 'none'}).{hint}"
+                )
         else:
             disk_path = src.get("disk_path") or ""
             local = dest / ("src" + Path(disk_path).suffix.lower())

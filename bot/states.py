@@ -20,3 +20,11 @@ class IntakeFixStates(StatesGroup):
 
 class MenuFocusStates(StatesGroup):
     waiting_text = State()
+
+
+class PassportTalkStates(StatesGroup):
+    talking = State()
+
+
+class StoriesUploadStates(StatesGroup):
+    collecting = State()

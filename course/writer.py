@@ -69,17 +69,27 @@ async def write_draft(
     previous: str = "",
     instruction: str = "",
     agents_client=None,
+    stories_stage: str = "",
+    launch_info: str = "",
 ) -> tuple[str, str, List[str]]:
     """Возвращает (text, model, issues). Issues могут быть, если повтор не помог."""
     from config import config
+    from course.stories_cycle import stage_prompt, writer_stories_rules
 
     spec = get_format(format_id) or get_format("tg_post")
     model = getattr(config, "CONTENT_WRITER_MODEL", "deepseek-v4-flash")
+    format_block = format_prompt_block(spec)
+    if spec.id == "stories":
+        format_block += "\n" + writer_stories_rules(stories_stage)
+        format_block += "\n" + stage_prompt(stories_stage)
+    product_blob = product_info or ""
+    if launch_info:
+        product_blob = (product_blob + "\n\n## Запуск\n" + launch_info).strip()
     static = writer_static_prefix(
         expert_info=expert_info,
-        product_info=product_info,
+        product_info=product_blob,
         style_passport=style_text,
-        format_block=format_prompt_block(spec),
+        format_block=format_block,
     )
     dynamic = writer_task_block(
         golden=golden,

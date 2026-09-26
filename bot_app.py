@@ -28,7 +28,10 @@ class BotApplication(TelegramBotApp):
         from bot.features.content_studio import ContentStudioFeature
         from bot.features.course_disk_sync import CourseDiskSyncFeature
         from bot.features.course_intake import CourseIntakeFeature
+        from bot.features.group_rag_indexer import GroupRagIndexerFeature
         from bot.features.main_menu import MainMenuFeature
+        from bot.features.passport_wizard import PassportWizardFeature
+        from bot.features.stories_intake import StoriesIntakeFeature
         from bot.features.style_feature import StyleFeature
 
         messaging_feature = ScriptureMessagingFeature(
@@ -41,6 +44,9 @@ class BotApplication(TelegramBotApp):
         course_intake = CourseIntakeFeature()
         content_studio = ContentStudioFeature()
         style_feature = StyleFeature()
+        passport_wizard = PassportWizardFeature()
+        stories_intake = StoriesIntakeFeature()
+        group_rag = GroupRagIndexerFeature()
 
         features = [
             messaging_feature,
@@ -49,6 +55,9 @@ class BotApplication(TelegramBotApp):
             course_intake,
             content_studio,
             style_feature,
+            passport_wizard,
+            stories_intake,
+            group_rag,
         ]
         for feature in features:
             self.feature_manager.register(feature)

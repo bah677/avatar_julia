@@ -226,3 +226,51 @@ class YandexDiskWebDAV:
                 if ent.href.rstrip("/") == path.rstrip("/") and not ent.is_collection:
                     return self._to_remote_file(ent)
         return None
+
+    async def mkdir(self, remote_dir: str) -> None:
+        if not self.configured:
+            raise RuntimeError("Yandex Disk WebDAV: нет логина/пароля")
+        url = self._url(remote_dir)
+        async with httpx.AsyncClient(
+            auth=(self._login, self._password),
+            timeout=self._timeout,
+            follow_redirects=True,
+        ) as client:
+            r = await client.request("MKCOL", url)
+            if r.status_code in (201, 405, 409):
+                return
+            r.raise_for_status()
+
+    async def move(self, src: str, dest: str) -> None:
+        if not self.configured:
+            raise RuntimeError("Yandex Disk WebDAV: нет логина/пароля")
+        async with httpx.AsyncClient(
+            auth=(self._login, self._password),
+            timeout=self._timeout,
+            follow_redirects=True,
+        ) as client:
+            r = await client.request(
+                "MOVE",
+                self._url(src),
+                headers={
+                    "Destination": self._url(dest),
+                    "Overwrite": "T",
+                },
+            )
+            if r.status_code not in (201, 204):
+                r.raise_for_status()
+
+    async def put_text(self, remote_path: str, text: str) -> None:
+        if not self.configured:
+            raise RuntimeError("Yandex Disk WebDAV: нет логина/пароля")
+        async with httpx.AsyncClient(
+            auth=(self._login, self._password),
+            timeout=self._timeout,
+            follow_redirects=True,
+        ) as client:
+            r = await client.put(
+                self._url(remote_path),
+                content=(text or "").encode("utf-8"),
+                headers={"Content-Type": "text/plain; charset=utf-8"},
+            )
+            r.raise_for_status()

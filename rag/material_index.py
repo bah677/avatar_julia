@@ -27,6 +27,9 @@ KIND_LABELS = {
     "post": "пост",
     "expert_info": "об эксперте",
     "product_info": "о продукте",
+    "stories": "сторис",
+    "expert_reply": "ответ эксперта",
+    "testimonial": "отзыв",
 }
 
 

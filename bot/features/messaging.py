@@ -85,7 +85,13 @@ class MessagingFeature(BaseFeature):
 
         await self.user_storage.save_user_from_message(message)
 
-        from bot.states import DislikeReasonStates, MenuFocusStates, StyleUploadStates
+        from bot.states import (
+            DislikeReasonStates,
+            MenuFocusStates,
+            PassportTalkStates,
+            StoriesUploadStates,
+            StyleUploadStates,
+        )
         from config import config as app_config
 
         cur = await state.get_state()
@@ -93,6 +99,8 @@ class MessagingFeature(BaseFeature):
         style_f = self.feature_manager.get_optional("style_feature")
         intake = self.feature_manager.get_optional("course_intake")
         menu = self.feature_manager.get_optional("main_menu")
+        passports = self.feature_manager.get_optional("passport_wizard")
+        stories_up = self.feature_manager.get_optional("stories_intake")
 
         if cur == DislikeReasonStates.waiting_text.state and studio:
             if await studio.try_handle_dislike_text(message, state, text):
@@ -102,6 +110,12 @@ class MessagingFeature(BaseFeature):
             return
         if cur == MenuFocusStates.waiting_text.state and menu:
             if await menu.try_handle_focus_text(message, state, text):
+                return
+        if cur == PassportTalkStates.talking.state and passports:
+            if await passports.try_handle_text(message, state, text):
+                return
+        if cur == StoriesUploadStates.collecting.state and stories_up:
+            if await stories_up.try_handle_upload(message, state, text):
                 return
 
         if studio and message.reply_to_message:

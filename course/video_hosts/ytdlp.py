@@ -108,6 +108,8 @@ async def _ytdlp_json(args: List[str], *, timeout: float = 90.0) -> Optional[Dic
     cookies = (getattr(config, "YTDLP_COOKIES_FILE", "") or "").strip()
     if cookies and os.path.isfile(cookies):
         cmd += ["--cookies", cookies]
+        if any("vimeo" in str(a).lower() for a in args):
+            cmd += ["--extractor-args", "vimeo:client=web"]
     cmd += args
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -225,6 +227,8 @@ class YtDlpAdapter(VideoHostAdapter):
         cookies = (getattr(config, "YTDLP_COOKIES_FILE", "") or "").strip()
         if cookies and os.path.isfile(cookies):
             cmd += ["--cookies", cookies]
+            if "vimeo" in (url or "").lower():
+                cmd += ["--extractor-args", "vimeo:client=web"]
         cmd.append(url)
         try:
             proc = await asyncio.create_subprocess_exec(

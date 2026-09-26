@@ -685,6 +685,10 @@ class GroupRagIndexerFeature(BaseFeature):
         content_type, product_value, content_category = resolve_content_type_product_category(
             topic_title
         )
+        from course.products import active_product_id, match_product_alias
+
+        product_id = match_product_alias(product_value) or active_product_id()
+        source_kind = "testimonial" if is_testimonial_chunk else "expert_reply"
         tags = await extract_content_tags(raw_text)
         source_label = build_source_identifier(message, raw_text, has_file_media)
         date_iso = message_date_iso_utc(message)
@@ -714,6 +718,11 @@ class GroupRagIndexerFeature(BaseFeature):
             "content_type": content_type,
             "content_category": content_category,
             "product": product_value,
+            "product_id": product_id,
+            "schema_v": 2,
+            "legacy": False,
+            "origin": "telegram_group",
+            "source_kind": source_kind,
             "tags": tags,
             "added_by": uid,
             "date": date_iso,

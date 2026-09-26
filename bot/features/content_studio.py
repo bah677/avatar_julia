@@ -652,13 +652,23 @@ class ContentStudioFeature(BaseFeature):
         await self._save_and_send(chat_id, item, text, model, issues, instruction=instruction)
 
     async def _generate(self, item: dict, user_id: int, *, instruction: str, previous: str = ""):
+        from course.passports import load_passport
         from course.products import EXPERT_PRODUCT_ID
+        from course.stories_cycle import normalize_stage
 
         pid = item["product_id"]
         style = await self._stor().get_active_style_profile(pid)
         style_text = (style or {}).get("text") or ""
-        expert_info = await self._info_text(EXPERT_PRODUCT_ID, "expert_info")
-        product_info = await self._info_text(pid, "product_info")
+        expert_p = await load_passport(self._stor(), "expert")
+        product_p = await load_passport(self._stor(), "product")
+        launch_p = await load_passport(self._stor(), "launch")
+        expert_info = (expert_p.get("text") or "") or await self._info_text(
+            EXPERT_PRODUCT_ID, "expert_info"
+        )
+        product_info = (product_p.get("text") or "") or await self._info_text(pid, "product_info")
+        launch_info = launch_p.get("text") or ""
+        stage_raw = await self._stor().get_content_setting(pid, "stories_cycle_stage")
+        stories_stage = normalize_stage(stage_raw if isinstance(stage_raw, str) else "")
         cards = await self._stor().list_cards_by_ids(item.get("card_ids") or [])
         material_parts = []
         for c in cards[:3]:
@@ -703,6 +713,8 @@ class ContentStudioFeature(BaseFeature):
             previous=previous,
             instruction=instruction,
             agents_client=agents,
+            stories_stage=stories_stage,
+            launch_info=launch_info[: config.COURSE_INFO_MAX_CHARS],
         )
 
     async def _info_text(self, product_id: str, kind: str) -> str:

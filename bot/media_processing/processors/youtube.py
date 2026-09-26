@@ -57,6 +57,16 @@ async def download_youtube_audio(url: str, *, max_duration_sec: int = 0) -> Opti
         "--no-warnings",
         "--quiet",
     ]
+    try:
+        from config import config
+
+        cookies = (getattr(config, "YTDLP_COOKIES_FILE", "") or "").strip()
+        if cookies and os.path.isfile(cookies):
+            cmd += ["--cookies", cookies]
+            if "vimeo" in (url or "").lower():
+                cmd += ["--extractor-args", "vimeo:client=web"]
+    except Exception:
+        pass
     if max_duration_sec > 0:
         cmd += ["--match-filter", f"duration<={max_duration_sec}"]
     cmd.append(url)
