@@ -94,7 +94,7 @@ class CourseDiskSyncFeature(BaseFeature):
             return await self._sync_unlocked(notify=notify, chat_id=chat_id)
 
     async def _sync_unlocked(self, *, notify: bool, chat_id: Optional[int]) -> str:
-        from course.worker import CourseWorker
+        from course.disk_identity import content_changed, file_fingerprint
 
         dav = YandexDiskWebDAV(config.YANDEX_DISK_LOGIN, config.YANDEX_DISK_PASSWORD)
         if not dav.configured:
@@ -114,17 +114,25 @@ class CourseDiskSyncFeature(BaseFeature):
             seen_paths.add(rf.path)
             existing = await stor.get_course_source_by_disk_path(rf.path)
             if existing:
-                if (existing.get("disk_etag") or "") == (rf.etag or "") and existing.get("status") != "deleted":
+                fp = file_fingerprint(size=rf.size, modified=rf.modified, etag=rf.etag)
+                real_change = content_changed(
+                    existing.get("disk_etag") or "",
+                    size=rf.size,
+                    modified=rf.modified,
+                    etag=rf.etag,
+                )
+                if existing.get("status") != "deleted" and not real_change:
+                    if (existing.get("disk_etag") or "") != fp:
+                        await stor.update_course_source(existing["id"], disk_etag=fp)
                     same_n += 1
                     continue
-                # changed etag → reprocess
                 await stor.archive_cards_for_source(existing["id"])
                 rs = getattr(self._app, "rag_stack", None)
                 if rs is not None:
                     rs.materials.delete_by_source(str(existing["id"]))
                 await stor.update_course_source(
                     existing["id"],
-                    disk_etag=rf.etag or "",
+                    disk_etag=fp,
                     status="new",
                     attempts=0,
                     error_message="",
@@ -156,7 +164,9 @@ class CourseDiskSyncFeature(BaseFeature):
                 lesson_id=lesson_id,
                 title=rf.name,
                 disk_path=rf.path,
-                disk_etag=rf.etag or "",
+                disk_etag=file_fingerprint(
+                    size=rf.size, modified=rf.modified, etag=rf.etag
+                ),
                 recorded_on=role.recorded_on,
                 platform=role.platform,
                 duration_sec=dur,
