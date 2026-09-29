@@ -241,6 +241,32 @@ class YandexDiskWebDAV:
                 return
             r.raise_for_status()
 
+    async def mkdir_p(self, remote_dir: str) -> None:
+        parts = [seg for seg in (remote_dir or "").split("/") if seg]
+        cur = ""
+        for seg in parts:
+            cur += "/" + seg
+            await self.mkdir(cur)
+
+    async def list_dirs(self, remote_dir: str) -> List[str]:
+        if not self.configured:
+            return []
+        dir_path = self._norm_href(remote_dir)
+        out: List[str] = []
+        async with httpx.AsyncClient(
+            auth=(self._login, self._password),
+            timeout=self._timeout,
+            follow_redirects=True,
+        ) as client:
+            for ent in await self._propfind(client, dir_path):
+                if not ent.is_collection:
+                    continue
+                href = ent.href.rstrip("/")
+                if href == dir_path.rstrip("/"):
+                    continue
+                out.append(href)
+        return out
+
     async def move(self, src: str, dest: str) -> None:
         if not self.configured:
             raise RuntimeError("Yandex Disk WebDAV: нет логина/пароля")

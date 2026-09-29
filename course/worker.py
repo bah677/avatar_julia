@@ -175,6 +175,18 @@ class CourseWorker:
                 raise RuntimeError(
                     f"Пустая расшифровка ({origin}, method={method or 'none'}).{hint}"
                 )
+            try:
+                from course.transcript_disk import upload_raw_transcript
+
+                remote = await upload_raw_transcript(
+                    storage=self.storage,
+                    src=src,
+                    segments=segs,
+                    method=method,
+                )
+                meta["disk_transcript"] = remote
+            except Exception as e:
+                logger.warning("upload raw transcript %s: %s", src.get("id"), e)
         else:
             disk_path = src.get("disk_path") or ""
             local = dest / ("src" + Path(disk_path).suffix.lower())
