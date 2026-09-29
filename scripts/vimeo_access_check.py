@@ -35,6 +35,13 @@ async def main() -> int:
     print(f"VIMEO_ACCESS_TOKEN: {'задан, len=' + str(len(token)) if token else 'нет'}")
     print(f"YTDLP_COOKIES_FILE: {config.YTDLP_COOKIES_FILE or 'нет'}")
     try:
+        me = await vimeo_get("/oauth/verify")
+        user = (me.get("user") or {}) if isinstance(me, dict) else {}
+        print(f"аккаунт: {user.get('name')} ({(me.get('scope') or '')})")
+        print(f"тариф: {(user.get('account') or '—')}")
+    except Exception as e:
+        print(f"oauth/verify: {e}")
+    try:
         data = await vimeo_get(
             video_api_path(vid, hashed),
             params={

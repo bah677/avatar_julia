@@ -12,7 +12,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 _API = "https://api.vimeo.com"
-_ACCEPT = "application/vnd.vimeo.*+json;version=3.4.10"
+_ACCEPT = "application/vnd.vimeo.*+json;version=3.4"
 _ID_RE = re.compile(
     r"(?:player\.)?vimeo\.com/(?:video/|channels/[\w]+/)?(\d+)(?:/([0-9a-f]{6,}))?",
     re.IGNORECASE,
