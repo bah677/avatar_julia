@@ -32,7 +32,7 @@ from config import config
 from course.formats import FORMATS, get_format
 from course.llm import CourseLLM
 from course.mining import window_for_card
-from course.paths import source_dir
+from course.paths import extracted_plain_text, source_dir
 from course.planner import build_week_plan, seconds_until, week_start_for
 from course.products import active_product, active_product_id, product_display_name
 from course.speech import segments_from_dicts
@@ -719,14 +719,14 @@ class ContentStudioFeature(BaseFeature):
 
     async def _info_text(self, product_id: str, kind: str) -> str:
         rows = await self._stor().list_course_sources_by_product([product_id], statuses=["done"])
+        parts: list[str] = []
         for r in rows:
-            if r.get("kind") == kind:
-                p = source_dir(r["id"]) / "pages.json"
-                if p.is_file():
-                    import json
-                    data = json.loads(p.read_text(encoding="utf-8"))
-                    return "\n\n".join(x.get("text") or "" for x in data)
-        return ""
+            if r.get("kind") != kind:
+                continue
+            text = extracted_plain_text(source_dir(r["id"]))
+            if text:
+                parts.append(text)
+        return "\n\n".join(parts)
 
     async def _save_and_send(
         self, chat_id: int, item: dict, text: str, model: str, issues: list, instruction: str

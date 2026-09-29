@@ -34,6 +34,17 @@ DOC_EXTS = frozenset({".pdf", ".docx", ".txt", ".md"})
 VIDEO_EXTS = frozenset({".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi"})
 AUDIO_EXTS = frozenset({".mp3", ".m4a", ".wav", ".ogg", ".opus", ".flac", ".aac"})
 MEDIA_EXTS = VIDEO_EXTS | AUDIO_EXTS
+DISK_TRANSCRIBE_KINDS = frozenset(
+    {
+        "lesson_video",
+        "practice",
+        "broadcast",
+        "other",
+        "expert_info",
+        "product_info",
+        "extra",
+    }
+)
 
 IGNORED_DIR_NAMES = frozenset({"архив", "archive"})
 
@@ -182,8 +193,15 @@ def classify_disk_path(
                     platform=_platform_from_folder(platform),
                 )
             return DiskFileRole(product_id=pid, kind="other", skip=True, skip_reason="unsupported")
-        if stem.casefold().startswith("об эксперт") and ext in DOC_EXTS:
-            return DiskFileRole(product_id=EXPERT_PRODUCT_ID, kind="expert_info")
+        info = _expert_or_product_info_role(
+            stem,
+            ext,
+            registry=registry,
+            default_product_id=EXPERT_PRODUCT_ID,
+            fallback_product_id=active_product_id,
+        )
+        if info:
+            return info
         if ext not in DOC_EXTS:
             return DiskFileRole(product_id=pid, kind="other", skip=True, skip_reason="unsupported")
         return DiskFileRole(product_id=EXPERT_PRODUCT_ID, kind="extra")
@@ -198,8 +216,13 @@ def classify_disk_path(
             )
         return DiskFileRole(product_id=pid, kind="other", skip=True, skip_reason="unsupported")
 
-    if stem.casefold().startswith("о продукт") and ext in DOC_EXTS:
-        return DiskFileRole(product_id=pid, kind="product_info")
+    root_info = _expert_or_product_info_role(
+        stem, ext, registry=registry, default_product_id=pid, only_named=True
+    )
+    if root_info and not any(parse_lesson_folder(seg) for seg in parts[:-1]):
+        section0 = rest[0].casefold() if rest else ""
+        if not section0.startswith("курс") and "практик" not in section0 and "эфир" not in section0:
+            return root_info
 
     lesson_key = ""
     lesson_title = ""
@@ -293,6 +316,78 @@ def classify_disk_path(
         )
 
     return DiskFileRole(product_id=pid, kind="extra", lesson_key=lesson_key)
+
+
+def _product_id_in_name(stem: str, registry: Optional[ProductRegistry]) -> Optional[str]:
+    n = (stem or "").casefold()
+    if not n:
+        return None
+    reg = registry or get_registry()
+    best = ""
+    found = None
+    for p in reg.products:
+        for alias in (p.name, p.id, p.disk_folder, *p.aliases):
+            a = (alias or "").strip().casefold()
+            if len(a) < 2 or a not in n:
+                continue
+            if len(a) > len(best):
+                best = a
+                found = p.id
+    return found
+
+
+def _is_expert_info_name(stem: str) -> bool:
+    n = (stem or "").casefold()
+    return n.startswith("об эксперт") or "об эксперте" in n or n.startswith("про эксперта")
+
+
+def _is_product_info_name(stem: str) -> bool:
+    n = (stem or "").casefold()
+    return (
+        n.startswith("о продукт")
+        or "о продукте" in n
+        or n.startswith("про продукт")
+        or "про продукт" in n
+    )
+
+
+def _expert_or_product_info_role(
+    stem: str,
+    ext: str,
+    *,
+    registry: Optional[ProductRegistry],
+    default_product_id: str,
+    only_named: bool = False,
+    fallback_product_id: str = "",
+) -> Optional[DiskFileRole]:
+    if ext not in DOC_EXTS and ext not in MEDIA_EXTS:
+        return None
+    mentioned = _product_id_in_name(stem, registry)
+    expert_named = _is_expert_info_name(stem)
+    product_named = _is_product_info_name(stem)
+    product_pid = mentioned or (
+        fallback_product_id
+        if fallback_product_id and fallback_product_id != EXPERT_PRODUCT_ID
+        else default_product_id
+    )
+
+    if default_product_id == EXPERT_PRODUCT_ID:
+        if expert_named:
+            return DiskFileRole(product_id=EXPERT_PRODUCT_ID, kind="expert_info")
+        if mentioned:
+            return DiskFileRole(product_id=mentioned, kind="product_info")
+        if product_named and product_pid != EXPERT_PRODUCT_ID:
+            return DiskFileRole(product_id=product_pid, kind="product_info")
+        if ext in MEDIA_EXTS:
+            return DiskFileRole(product_id=EXPERT_PRODUCT_ID, kind="expert_info")
+        return None
+
+    if only_named:
+        if expert_named:
+            return DiskFileRole(product_id=EXPERT_PRODUCT_ID, kind="expert_info")
+        if product_named or mentioned:
+            return DiskFileRole(product_id=product_pid, kind="product_info")
+    return None
 
 
 def _platform_from_folder(name: str) -> str:

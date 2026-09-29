@@ -30,7 +30,12 @@ def format_raw_transcript(
     segments: Sequence[SpeechSegment],
 ) -> str:
     head: list[str] = []
-    label = " ".join(x for x in (f"Урок {lesson_key}".strip(), title) if x).strip()
+    label_parts = []
+    if lesson_key:
+        label_parts.append(f"Урок {lesson_key}")
+    if title:
+        label_parts.append(title)
+    label = " ".join(label_parts).strip()
     if label:
         head.append(label)
     if url:

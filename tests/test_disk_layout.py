@@ -91,6 +91,27 @@ class DiskLayoutTests(unittest.TestCase):
         self.assertEqual(role.kind, "product_info")
         self.assertEqual(role.product_id, "mbt")
 
+    def test_expert_folder_product_video(self) -> None:
+        role = _role("/Аватар/00 Эксперт/Про МБТ.mp4")
+        self.assertFalse(role.skip)
+        self.assertEqual(role.kind, "product_info")
+        self.assertEqual(role.product_id, "mbt")
+
+    def test_expert_folder_unnamed_media(self) -> None:
+        video = _role("/Аватар/00 Эксперт/интервью.mp4")
+        self.assertFalse(video.skip)
+        self.assertEqual(video.kind, "expert_info")
+        self.assertEqual(video.product_id, "_expert")
+        audio = _role("/Аватар/00 Эксперт/про эксперта.m4a")
+        self.assertEqual(audio.kind, "expert_info")
+        self.assertEqual(audio.product_id, "_expert")
+
+    def test_product_folder_named_audio(self) -> None:
+        role = _role("/Аватар/МБТ/О продукте.mp3")
+        self.assertFalse(role.skip)
+        self.assertEqual(role.kind, "product_info")
+        self.assertEqual(role.product_id, "mbt")
+
     def test_inactive_product_skipped(self) -> None:
         role = _role("/Аватар/Курс Магия/Курс/Урок 1.1/конспект.pdf")
         self.assertTrue(role.skip)

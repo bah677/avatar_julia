@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from html import escape as html_escape
+from pathlib import Path
 from typing import Any, Optional
 from uuid import UUID
 
@@ -16,7 +17,7 @@ from bot.admin_guard import is_admin_or_super
 from bot.features.base import BaseFeature
 from bot.filters.private_only import CALLBACK_PRIVATE_CHAT
 from config import config
-from course.disk_layout import lesson_sort_key
+from course.disk_layout import DISK_TRANSCRIBE_KINDS, MEDIA_EXTS, lesson_sort_key
 from course.disk_scan import scan_course_disk
 from course.products import active_product, active_product_id, scoped_product_ids
 from yandex_disk.webdav import YandexDiskWebDAV
@@ -155,7 +156,7 @@ class CourseDiskSyncFeature(BaseFeature):
             if role.needs_lesson_confirm:
                 need_confirm.append(item)
             dur = None
-            if role.kind in ("lesson_video", "practice", "broadcast", "other"):
+            if role.kind in DISK_TRANSCRIBE_KINDS and Path(rf.name).suffix.lower() in MEDIA_EXTS:
                 media_new += 1
             sid = await stor.insert_course_source(
                 product_id=role.product_id,

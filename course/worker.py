@@ -19,7 +19,8 @@ from course.mining import (
     mining_chunks_from_pages,
     mining_chunks_from_segments,
 )
-from course.paths import source_dir, tmp_dir
+from course.disk_layout import DISK_TRANSCRIBE_KINDS, MEDIA_EXTS
+from course.paths import extracted_plain_text, source_dir, tmp_dir
 from course.products import EXPERT_PRODUCT_ID, active_product_id, scoped_product_ids
 from course.speech import segments_from_dicts, segments_to_dicts
 from course.transcribe import transcribe_source_video
@@ -141,11 +142,10 @@ class CourseWorker:
         chars = 0
         method = ""
 
+        media_path = str(src.get("disk_path") or src.get("url") or "")
+        ext = Path(media_path).suffix.lower()
         if origin in ("youtube", "vimeo", "kinescope") or (
-            origin == "disk" and kind in ("lesson_video", "practice", "broadcast", "other")
-            and str(src.get("disk_path") or "").lower().endswith(
-                (".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi", ".mp3", ".m4a", ".wav", ".ogg", ".opus", ".flac", ".aac")
-            )
+            origin == "disk" and kind in DISK_TRANSCRIBE_KINDS and ext in MEDIA_EXTS
         ):
             adapter = adapter_for(origin)
             url = src.get("url") or src.get("disk_path") or ""
@@ -408,9 +408,6 @@ class CourseWorker:
             if cid:
                 n_new += 1
 
-        if kind in ("post", "expert_info", "product_info"):
-            await self._ingest_style_inputs(src, dest)
-
         await self.storage.update_course_source(
             src["id"],
             status="done",
@@ -418,6 +415,8 @@ class CourseWorker:
             processed_at=datetime.now(timezone.utc),
             error_message="",
         )
+        if kind in ("post", "expert_info", "product_info"):
+            await self._ingest_style_inputs(src, dest)
         await self._update_intake(src, f"✅ готово: {n_new} карточек")
         if src.get("lesson_id"):
             self._schedule_passport(int(src["lesson_id"]))
@@ -490,16 +489,21 @@ class CourseWorker:
             logger.warning("rebuild style: %s", e)
 
     async def _load_info_text(self, product_id: str, kind: str) -> str:
+        from config import config
+
         rows = await self.storage.list_course_sources_by_product(
             [product_id], statuses=["done"]
         )
+        parts: list[str] = []
         for r in rows:
-            if r.get("kind") == kind:
-                pages = source_dir(r["id"]) / "pages.json"
-                if pages.is_file():
-                    data = json.loads(pages.read_text(encoding="utf-8"))
-                    return "\n\n".join(p.get("text") or "" for p in data)
-        return ""
+            if r.get("kind") != kind:
+                continue
+            text = extracted_plain_text(source_dir(r["id"]))
+            if text:
+                parts.append(text)
+        joined = "\n\n".join(parts)
+        limit = int(getattr(config, "COURSE_INFO_MAX_CHARS", 8000) or 8000)
+        return joined[:limit]
 
     async def _load_posts_text(self, product_id: str) -> str:
         rows = await self.storage.list_course_sources_by_product(

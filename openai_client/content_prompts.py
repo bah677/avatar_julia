@@ -64,6 +64,8 @@ def mining_system(expert_name: str, kind: str) -> str:
         "lesson_video": "Это запись урока.",
         "summary": "Это конспект урока (текст/страницы).",
         "slides": "Это слайды. Карточки — по тезисам слайдов, page = номер страницы.",
+        "expert_info": "Это рассказ об эксперте. Карточки — биография, подход, личные истории, позиционирование.",
+        "product_info": "Это рассказ о продукте. Карточки — оффер, для кого, как устроен, отличия.",
     }.get(kind, "")
     return MINING_SYSTEM.format(expert_name=expert_name or "эксперт") + ("\n" + extra if extra else "")
 
