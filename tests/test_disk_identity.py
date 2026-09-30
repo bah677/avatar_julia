@@ -41,13 +41,13 @@ class DiskIdentityTests(unittest.TestCase):
             content_changed(fp, size=50, modified=mt, etag="new")
         )
 
-    def test_mtime_jump_same_size_is_change(self):
+    def test_mtime_jump_same_size_is_not_a_change(self):
         fp = file_fingerprint(
             size=50,
             modified=datetime(2026, 9, 1, tzinfo=timezone.utc),
             etag="old",
         )
-        self.assertTrue(
+        self.assertFalse(
             content_changed(
                 fp,
                 size=50,

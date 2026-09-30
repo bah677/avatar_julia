@@ -25,6 +25,7 @@ class DiskScanResult:
     items: List[DiskScanItem] = field(default_factory=list)
     skipped: int = 0
     errors: List[str] = field(default_factory=list)
+    listed_paths: set = field(default_factory=set)
 
 
 def _fresh_enough(rf: RemoteFile, *, min_age_sec: int = 120) -> bool:
@@ -64,6 +65,7 @@ async def scan_course_disk(
             if rf.path in seen_paths:
                 continue
             seen_paths.add(rf.path)
+            result.listed_paths.add(rf.path)
             role = classify_disk_path(
                 rf.path,
                 active_product_id=active_product_id,

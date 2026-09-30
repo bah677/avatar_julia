@@ -109,10 +109,10 @@ class CourseDiskSyncFeature(BaseFeature):
         new_n = changed_n = deleted_n = same_n = 0
         need_confirm: list = []
         media_new = 0
-        seen_paths = set()
+        present_paths = set(scan.listed_paths)
         for item in scan.items:
             rf, role = item.remote, item.role
-            seen_paths.add(rf.path)
+            present_paths.add(rf.path)
             existing = await stor.get_course_source_by_disk_path(rf.path)
             if existing:
                 fp = file_fingerprint(size=rf.size, modified=rf.modified, etag=rf.etag)
@@ -122,9 +122,19 @@ class CourseDiskSyncFeature(BaseFeature):
                     modified=rf.modified,
                     etag=rf.etag,
                 )
-                if existing.get("status") != "deleted" and not real_change:
+                if not real_change:
+                    fields: dict = {}
                     if (existing.get("disk_etag") or "") != fp:
-                        await stor.update_course_source(existing["id"], disk_etag=fp)
+                        fields["disk_etag"] = fp
+                    if existing.get("status") == "deleted":
+                        fields["status"] = (
+                            "done"
+                            if existing.get("processed_at") or existing.get("chars_count")
+                            else "new"
+                        )
+                        fields["error_message"] = ""
+                    if fields:
+                        await stor.update_course_source(existing["id"], **fields)
                     same_n += 1
                     continue
                 await stor.archive_cards_for_source(existing["id"])
@@ -178,13 +188,19 @@ class CourseDiskSyncFeature(BaseFeature):
                 new_n += 1
 
         # deleted
+        if scan.errors:
+            logger.warning(
+                "disk scan incomplete, skip deletions: %s", "; ".join(scan.errors[:5])
+            )
         known = await stor.list_course_sources_by_product(
             scoped_product_ids(), statuses=None
         )
         for row in known:
+            if scan.errors:
+                break
             if row.get("origin") != "disk" or not row.get("disk_path"):
                 continue
-            if row["disk_path"] in seen_paths:
+            if row["disk_path"] in present_paths:
                 continue
             if row.get("status") == "deleted":
                 continue

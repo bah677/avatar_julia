@@ -61,17 +61,17 @@ def content_changed(
     modified: Any = None,
     etag: str = "",
 ) -> bool:
-    """True только если сменился размер или известный mtime. Один etag не считается."""
+    """True только если сменился размер. Etag и mtime Диска сами по себе не считаются."""
     prev_sz, prev_mt, prev_et = parse_fingerprint(stored)
     new_sz = int(size or 0)
     new_mt = _mtime_unix(modified)
     new_et = normalize_etag(etag)
     if prev_sz is not None and prev_sz != new_sz:
         return True
-    if prev_mt is not None and new_mt is not None and abs(prev_mt - new_mt) > 2:
-        return True
-    if prev_et and new_et and prev_et == new_et:
-        return False
     if prev_sz is not None and prev_sz == new_sz:
         return False
+    if prev_et and new_et and prev_et == new_et:
+        return False
+    if prev_mt is not None and new_mt is not None and abs(prev_mt - new_mt) > 2:
+        return True
     return False

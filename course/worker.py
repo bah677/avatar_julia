@@ -568,13 +568,13 @@ class CourseWorker:
             llm=llm,
             user_id=0,
         )
+        had_passport = bool((lesson.get("passport_text") or "").strip())
         await self.storage.update_lesson_passport(lesson_id, passport=data, passport_text=text)
-        n_cards = sum(1 for s in sources if s.get("status") == "done")
         total_cards = await self.storage.list_content_cards(
             product_id=lesson["product_id"], lesson_id=lesson_id, limit=200
         )
         kinds = {s.get("kind") for s in sources if s.get("status") == "done"}
-        if "lesson_video" in kinds or "summary" in kinds:
+        if not had_passport and ("lesson_video" in kinds or "summary" in kinds):
             await self._notify_expert(
                 f"Урок {lesson['lesson_key']} разобран: паспорт + {len(total_cards)} карточек",
                 lesson_id=lesson_id,
