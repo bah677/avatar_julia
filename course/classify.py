@@ -9,11 +9,12 @@ from typing import List, Optional, Sequence
 
 from course.disk_layout import parse_date_from_name, parse_lesson_key_from_text
 from course.llm import CourseLLM
+from course.match_scope import match_scope, parse_module_no
 from course.models import ClassifyResult, VideoProbe
 
 logger = logging.getLogger(__name__)
 
-_PRACTICE_RE = re.compile(r"практик|zoom|разбор|встреч", re.IGNORECASE)
+_PRACTICE_RE = re.compile(r"практик|zoom|зум|разбор|встреч", re.IGNORECASE)
 _BROADCAST_RE = re.compile(r"эфир", re.IGNORECASE)
 _LESSON_RE = re.compile(r"урок", re.IGNORECASE)
 
@@ -43,8 +44,12 @@ def classify_by_rules(
         conf = 0.35
     if lesson_key:
         conf = min(0.95, conf + 0.15)
+    module_no = None if lesson_key else parse_module_no(blob)
+    if module_no is not None and not lesson_key:
+        conf = min(0.95, conf + 0.1)
     return ClassifyResult(
         lesson_key=lesson_key,
+        module_no=module_no,
         kind=kind,
         recorded_on=recorded,
         confidence=conf,
@@ -66,7 +71,21 @@ async def classify_video(
         comment=comment,
         description=probe.description or "",
     )
+    scoped = match_scope(f"{comment}\n{probe.title or ''}", lessons)
+    if scoped.lesson_key and not rules.lesson_key:
+        rules.lesson_key = scoped.lesson_key
+        rules.confidence = max(rules.confidence, scoped.confidence)
+        rules.title = scoped.title or rules.title
+    if scoped.module_no is not None:
+        rules.module_no = scoped.module_no
+    if scoped.kind_hint and rules.kind in ("other", "") and scoped.confidence >= 0.5:
+        rules.kind = scoped.kind_hint
+        rules.confidence = max(rules.confidence, scoped.confidence)
     if rules.lesson_key and rules.kind in ("lesson_video", "practice", "broadcast") and rules.confidence >= 0.7:
+        return rules
+    if scoped.module_no and not rules.lesson_key and scoped.confidence >= 0.75:
+        if not rules.kind or rules.kind == "other":
+            rules.kind = scoped.kind_hint or "practice"
         return rules
     if llm is None:
         return rules
@@ -74,14 +93,16 @@ async def classify_video(
 
     model = getattr(config, "COURSE_PLANNER_MODEL", "gpt-4o-mini")
     lesson_lines = "\n".join(
-        f"- {row.get('lesson_key')}: {row.get('title') or ''}"
+        f"- {row.get('lesson_key')}: {row.get('title') or ''} (модуль {row.get('module_no') or '—'})"
         for row in lessons
     ) or "(уроков пока нет)"
     system = (
         "Ты классифицируешь видео эксперта для базы курса. "
-        "Верни JSON: {\"lesson_key\":\"2.4 или пусто\",\"kind\":\"lesson_video|practice|broadcast|other\","
+        "Верни JSON: {\"lesson_key\":\"2.4 или пусто\",\"module_no\":null или число,"
+        "\"kind\":\"lesson_video|practice|broadcast|other\","
         "\"recorded_on\":\"YYYY-MM-DD или пусто\",\"confidence\":0.0}. "
         "kind: lesson_video — запись урока; practice — Zoom-практика; broadcast — эфир; other — прочее. "
+        "Если запись ко всему модулю/разделу, а не к одному уроку: lesson_key пустой, module_no заполнен. "
         "Не выдумывай номер урока, которого нет в списке, если только он явно не назван."
     )
     user = (
@@ -90,7 +111,7 @@ async def classify_video(
         f"Описание (начало): {(probe.description or '')[:800]}\n"
         f"Дата хостинга: {probe.recorded_on or '—'}\n"
         f"Уроки активного продукта:\n{lesson_lines}\n"
-        f"Эвристика: lesson_key={rules.lesson_key} kind={rules.kind}"
+        f"Эвристика: lesson_key={rules.lesson_key} module_no={rules.module_no} kind={rules.kind}"
     )
     try:
         data = await llm.complete_json(
@@ -126,8 +147,16 @@ async def classify_video(
         conf = float(data.get("confidence") or 0.6)
     except (TypeError, ValueError):
         conf = 0.6
+    module_no = rules.module_no
+    raw_mod = data.get("module_no")
+    if raw_mod not in (None, ""):
+        try:
+            module_no = int(raw_mod)
+        except (TypeError, ValueError):
+            pass
     return ClassifyResult(
         lesson_key=lk or rules.lesson_key,
+        module_no=module_no,
         kind=kind,
         recorded_on=rec or rules.recorded_on or probe.recorded_on,
         confidence=conf,

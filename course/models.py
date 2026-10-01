@@ -33,7 +33,7 @@ SOURCE_STATUSES = (
     "deleted",
 )
 
-VIDEO_ORIGINS = ("youtube", "vimeo", "kinescope", "disk")
+VIDEO_ORIGINS = ("youtube", "vimeo", "kinescope", "zoom", "disk")
 
 KIND_LABELS = {
     "lesson_video": "видео урока",
@@ -72,6 +72,7 @@ class Source:
     origin: str = "disk"
     kind: str = "other"
     lesson_id: Optional[int] = None
+    module_no: Optional[int] = None
     title: str = ""
     disk_path: Optional[str] = None
     disk_etag: str = ""
@@ -145,6 +146,7 @@ class VideoProbe:
 @dataclass
 class ClassifyResult:
     lesson_key: str = ""
+    module_no: Optional[int] = None
     kind: str = "other"
     recorded_on: Optional[date] = None
     confidence: float = 0.0

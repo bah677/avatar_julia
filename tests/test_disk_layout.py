@@ -118,10 +118,29 @@ class DiskLayoutTests(unittest.TestCase):
         self.assertEqual(role.skip_reason, "inactive_product")
         self.assertEqual(role.product_id, "magiya")
 
-    def test_archive_skipped(self) -> None:
-        role = _role("/Аватар/МБТ/Архив/старое.pdf")
-        self.assertTrue(role.skip)
-        self.assertEqual(role.skip_reason, "archive")
+    def test_link_file_in_lesson_folder(self) -> None:
+        role = _role(
+            "/Аватар/МБТ/Курс/Модуль 2/Урок 2.4. Деньги/ссылки.txt"
+        )
+        self.assertTrue(role.link_list)
+        self.assertEqual(role.kind, "lesson_video")
+        self.assertEqual(role.lesson_key, "2.4")
+        self.assertEqual(role.module_no, 2)
+        self.assertFalse(role.needs_lesson_confirm)
+
+    def test_link_file_module_only(self) -> None:
+        role = _role("/Аватар/МБТ/Курс/Модуль 2/запись.txt")
+        self.assertTrue(role.link_list)
+        self.assertEqual(role.kind, "lesson_video")
+        self.assertEqual(role.lesson_key, "")
+        self.assertEqual(role.module_no, 2)
+        self.assertFalse(role.needs_lesson_confirm)
+
+    def test_zoom_link_file_in_practices(self) -> None:
+        role = _role("/Аватар/МБТ/Практики/zoom.txt")
+        self.assertTrue(role.link_list)
+        self.assertEqual(role.kind, "practice")
+        self.assertTrue(role.needs_lesson_confirm)
 
 
 if __name__ == "__main__":

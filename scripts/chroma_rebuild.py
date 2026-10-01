@@ -25,75 +25,9 @@ logger = logging.getLogger("chroma_rebuild")
 
 
 def _index_source(rs, src: Dict[str, Any], lesson: Optional[Dict[str, Any]]) -> int:
-    from course.paths import source_dir
-    from course.products import product_display_name
-    from rag.material_index import format_chunk_heading, v2_base_metadata
+    from course.source_index import add_source_to_materials
 
-    dest = source_dir(src["id"])
-    lesson_key = (lesson or {}).get("lesson_key") or ""
-    lesson_title = (lesson or {}).get("title") or ""
-    product_name = product_display_name(src["product_id"])
-    meta = v2_base_metadata(
-        product_id=src["product_id"],
-        source_id=str(src["id"]),
-        source_kind=src.get("kind") or "other",
-        origin=src.get("origin") or "disk",
-        lesson_key=lesson_key,
-        module_no=(lesson or {}).get("module_no"),
-        recorded_on=str(src.get("recorded_on") or ""),
-    )
-    salt = f"course:{src['id']}:{src.get('disk_etag') or src.get('video_id') or ''}"
-    rs.materials.delete_by_source(str(src["id"]))
-    n = 0
-    tr_path = dest / "transcript.json"
-    pages_path = dest / "pages.json"
-    posts_path = dest / "posts.json"
-    if tr_path.is_file():
-        data = json.loads(tr_path.read_text(encoding="utf-8"))
-        segs = data.get("segments") or []
-
-        def _h(start, end):
-            return format_chunk_heading(
-                product_name=product_name,
-                lesson_key=lesson_key,
-                lesson_title=lesson_title,
-                kind=src.get("kind") or "",
-                start_sec=start,
-                end_sec=end,
-            )
-
-        n, _ = rs.materials.add_segments_text(
-            segs,
-            base_metadata=meta,
-            source=str(src["id"])[:80],
-            dedupe_salt=salt,
-            heading_fn=_h,
-        )
-    elif pages_path.is_file() or posts_path.is_file():
-        pages: List[dict]
-        if posts_path.is_file() and not pages_path.is_file():
-            posts = json.loads(posts_path.read_text(encoding="utf-8"))
-            pages = [{"page": i + 1, "text": t} for i, t in enumerate(posts)]
-        else:
-            pages = json.loads(pages_path.read_text(encoding="utf-8"))
-        page_tuples = [
-            (int(p.get("page") or i + 1), p.get("text") or "") for i, p in enumerate(pages)
-        ]
-        heading = format_chunk_heading(
-            product_name=product_name,
-            lesson_key=lesson_key,
-            lesson_title=lesson_title,
-            kind=src.get("kind") or "",
-        )
-        n, _ = rs.materials.add_material_text(
-            "",
-            base_metadata=meta,
-            source=str(src["id"])[:80],
-            dedupe_salt=salt,
-            heading=heading,
-            pages=page_tuples,
-        )
-    return n
+    return add_source_to_materials(rs, src, lesson=lesson)
 
 
 def _wipe_cards_collection(store) -> None:

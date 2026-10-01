@@ -300,3 +300,16 @@ class YandexDiskWebDAV:
                 headers={"Content-Type": "text/plain; charset=utf-8"},
             )
             r.raise_for_status()
+
+    async def get_text(self, remote_path: str, *, max_bytes: int = 200_000) -> str:
+        if not self.configured:
+            raise RuntimeError("Yandex Disk WebDAV: нет логина/пароля")
+        async with httpx.AsyncClient(
+            auth=(self._login, self._password),
+            timeout=self._timeout,
+            follow_redirects=True,
+        ) as client:
+            r = await client.get(self._url(remote_path))
+            r.raise_for_status()
+            data = r.content[: max(1024, int(max_bytes))]
+        return data.decode("utf-8", errors="replace")

@@ -9,7 +9,7 @@ import os
 import re
 import sys
 import tempfile
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from course.models import VideoProbe
@@ -71,6 +71,17 @@ def extract_kinescope_urls(text: str) -> list[str]:
     ]
 
 
+def extract_zoom_urls(text: str) -> list[str]:
+    return [
+        m.group(0).rstrip(").,;")
+        for m in re.finditer(
+            r"https?://(?:[\w-]+\.)?zoom\.us/rec/(?:share|play|clip)/[^\s]+",
+            text or "",
+            re.IGNORECASE,
+        )
+    ]
+
+
 def extract_video_urls(text: str) -> list[tuple[str, str]]:
     """[(host, url), ...] с сохранением порядка."""
     seen = set()
@@ -87,6 +98,10 @@ def extract_video_urls(text: str) -> list[tuple[str, str]]:
         if url not in seen:
             seen.add(url)
             out.append(("kinescope", url))
+    for url in extract_zoom_urls(text):
+        if url not in seen:
+            seen.add(url)
+            out.append(("zoom", url))
     return out
 
 
@@ -98,6 +113,8 @@ def detect_host(url: str) -> str:
         return "vimeo"
     if "kinescope" in u:
         return "kinescope"
+    if "zoom.us" in u:
+        return "zoom"
     return ""
 
 
@@ -154,13 +171,21 @@ def probe_from_info(info: Dict[str, Any], host: str, url: str) -> VideoProbe:
                     "title": ch.get("title") or "",
                 }
             )
+    recorded_on = _parse_upload_date(str(info.get("upload_date") or ""))
+    if recorded_on is None:
+        try:
+            ts = int(info.get("timestamp") or 0)
+        except (TypeError, ValueError):
+            ts = 0
+        if ts > 0:
+            recorded_on = datetime.fromtimestamp(ts, tz=timezone.utc).date()
     return VideoProbe(
         host=host,
         video_id=vid,
         url=url,
         title=str(info.get("title") or ""),
         duration_sec=duration_sec,
-        recorded_on=_parse_upload_date(str(info.get("upload_date") or "")),
+        recorded_on=recorded_on,
         description=str(info.get("description") or "")[:4000],
         chapters=chapters,
         has_subtitles=subs,

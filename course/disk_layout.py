@@ -62,6 +62,7 @@ class DiskFileRole:
     needs_lesson_confirm: bool = False
     skip: bool = False
     skip_reason: str = ""
+    link_list: bool = False
 
 
 def _norm_parts(remote_path: str) -> List[str]:
@@ -76,6 +77,27 @@ def is_ignored_name(name: str) -> bool:
     if n.startswith("_") or n.startswith("."):
         return True
     return n.casefold() in IGNORED_DIR_NAMES
+
+
+_LINK_NAME_MARKERS = (
+    "запись",
+    "ссылк",
+    "видео",
+    "zoom",
+    "зум",
+    "kinescope",
+    "vimeo",
+    "youtube",
+    "ютуб",
+)
+
+
+def is_video_link_filename(name: str) -> bool:
+    p = Path(name or "")
+    if p.suffix.lower() not in {".txt", ".md"}:
+        return False
+    n = p.stem.casefold()
+    return any(m in n for m in _LINK_NAME_MARKERS)
 
 
 def parse_lesson_folder(name: str) -> Optional[tuple[str, Optional[int], int, str]]:
@@ -280,6 +302,34 @@ def classify_disk_path(
 
     if ext not in DOC_EXTS:
         return DiskFileRole(product_id=pid, kind="other", skip=True, skip_reason="unsupported")
+
+    if is_video_link_filename(name):
+        nstem = stem.casefold()
+        lk = lesson_key or parse_lesson_key_from_text(stem)
+        kind = "other"
+        if in_lesson_folder:
+            kind = "lesson_video"
+        elif "практик" in section:
+            kind = "practice"
+        elif "эфир" in section:
+            kind = "broadcast"
+        elif module_no is not None:
+            kind = "lesson_video"
+        if "практик" in nstem or "зум" in nstem or "zoom" in nstem:
+            kind = "practice"
+        elif "эфир" in nstem:
+            kind = "broadcast"
+        return DiskFileRole(
+            product_id=pid,
+            kind=kind,
+            lesson_key=lk,
+            lesson_title=lesson_title,
+            module_no=module_no,
+            lesson_no=lesson_no if in_lesson_folder else None,
+            recorded_on=recorded_on,
+            needs_lesson_confirm=not lk and module_no is None,
+            link_list=True,
+        )
 
     lname = name.casefold()
     if in_lesson_folder:

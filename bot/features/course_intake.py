@@ -23,6 +23,7 @@ from course.models import KIND_LABELS, VideoProbe
 from course.products import active_product, active_product_id, scoped_product_ids
 from course.video_hosts import adapter_for
 from course.video_hosts.ytdlp import YtDlpAdapter, extract_video_urls
+from course.video_links import extract_video_description, extract_video_password
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,14 @@ def _fmt_dur(sec: Optional[int]) -> str:
     if h:
         return f"{h}:{m:02d}:{s:02d}"
     return f"{m}:{s:02d}"
+
+
+def _scope_label(c) -> str:
+    if getattr(c, "lesson_key", None):
+        return f"Урок {c.lesson_key}"
+    if getattr(c, "module_no", None):
+        return f"Модуль {c.module_no} целиком"
+    return "без урока"
 
 
 class CourseIntakeFeature(BaseFeature):
@@ -63,14 +72,10 @@ class CourseIntakeFeature(BaseFeature):
         await message.answer("Смотрю ссылки…")
         items = []
         comment = text
+        password = extract_video_password(text)
+        description = extract_video_description(text)
         for host, url in pairs[: int(config.COURSE_PLAYLIST_MAX or 100)]:
-            if host == "kinescope":
-                await message.answer(
-                    f"Kinescope пока на этапе 5: {html_escape(url)}",
-                    parse_mode=ParseMode.HTML,
-                )
-                continue
-            adapter = adapter_for(host)
+            adapter = adapter_for(host, video_password=password if host == "zoom" else "")
             probes: List[VideoProbe] = []
             if "list=" in url and host == "youtube":
                 probes = await YtDlpAdapter("youtube").probe_playlist(
@@ -89,7 +94,14 @@ class CourseIntakeFeature(BaseFeature):
                     existing = await self._app.user_storage.get_course_source_by_video(
                         host, probe.video_id
                     )
-                items.append({"host": host, "probe": probe, "existing": existing, "comment": comment})
+                items.append({
+                    "host": host,
+                    "probe": probe,
+                    "existing": existing,
+                    "comment": comment,
+                    "password": password if host == "zoom" else "",
+                    "description": description,
+                })
         if not items:
             return True
         if items[0]["existing"] and len(items) == 1:
@@ -108,6 +120,52 @@ class CourseIntakeFeature(BaseFeature):
             return True
         await self._classify_and_confirm(message, items)
         return True
+
+    def _confirm_text(self, classified: list) -> str:
+        product = active_product()
+        lines = [f"<b>{html_escape(product.name)}</b> · подтверждение источников"]
+        for i, it in enumerate(classified, 1):
+            p: VideoProbe = it["probe"]
+            c = it["clf"]
+            host = it["host"].capitalize()
+            kind = KIND_LABELS.get(c.kind, c.kind)
+            lines.append(
+                f"{i}. 🎬 {host} · «{html_escape(p.title or '')}» · {_fmt_dur(p.duration_sec)}\n"
+                f"→ {html_escape(product.name)} · {html_escape(_scope_label(c))} · {html_escape(kind)}"
+            )
+            desc = (it.get("description") or "").strip()
+            if desc:
+                snippet = desc if len(desc) <= 280 else desc[:277] + "…"
+                lines.append(f"📝 {html_escape(snippet)}")
+        text = "\n".join(lines)
+        hours = sum((it["probe"].duration_sec or 0) for it in classified) / 3600.0
+        if hours > 0.2 or len(classified) > 3:
+            costs = config.cost_table_map
+            whisper = float(costs.get("whisper_per_min") or 0.006) * hours * 60
+            text += (
+                f"\n\nОценка: ~{hours:.1f} ч видео. "
+                f"Субтитры: смотрим при обработке. Whisper при необходимости ~${whisper:.2f}."
+            )
+        return text
+
+    def _confirm_kb(self, batch_id: str, n_items: int) -> InlineKeyboardMarkup:
+        rows = [
+            [
+                InlineKeyboardButton(text="✅ Верно", callback_data=f"in:ok:{batch_id}"),
+                InlineKeyboardButton(text="📚 Урок", callback_data=f"in:ls:{batch_id}"),
+            ],
+            [
+                InlineKeyboardButton(text="📦 Модуль", callback_data=f"in:md:{batch_id}"),
+                InlineKeyboardButton(text="🔁 Тип", callback_data=f"in:tp:{batch_id}"),
+            ],
+            [InlineKeyboardButton(text="✖ Отмена", callback_data=f"in:x:{batch_id}")],
+        ]
+        if n_items > 1:
+            rows[0][0] = InlineKeyboardButton(text="✅ Всё верно", callback_data=f"in:ok:{batch_id}")
+        hours_hint = n_items > 3
+        if hours_hint:
+            rows.append([InlineKeyboardButton(text="▶️ Запустить", callback_data=f"in:ok:{batch_id}")])
+        return InlineKeyboardMarkup(inline_keyboard=rows)
 
     async def _classify_and_confirm(self, message: Message, items: list) -> None:
         stor = self._app.user_storage
@@ -130,50 +188,11 @@ class CourseIntakeFeature(BaseFeature):
             "chat_id": message.chat.id,
             "items": classified,
         }
-        product = active_product()
-        lines = [f"<b>{html_escape(product.name)}</b> · подтверждение источников"]
-        for i, it in enumerate(classified, 1):
-            p: VideoProbe = it["probe"]
-            c = it["clf"]
-            host = it["host"].capitalize()
-            kind = KIND_LABELS.get(c.kind, c.kind)
-            lesson = f"Урок {c.lesson_key}" if c.lesson_key else "без урока"
-            lines.append(
-                f"{i}. 🎬 {host} · «{html_escape(p.title or '')}» · {_fmt_dur(p.duration_sec)}\n"
-                f"→ {html_escape(product.name)} · {html_escape(lesson)} · {html_escape(kind)}"
-            )
-        text = "\n".join(lines)
-        if len(classified) == 1:
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="✅ Верно", callback_data=f"in:ok:{batch_id}"),
-                    InlineKeyboardButton(text="📚 Другой урок", callback_data=f"in:ls:{batch_id}"),
-                ],
-                [
-                    InlineKeyboardButton(text="🔁 Тип", callback_data=f"in:tp:{batch_id}"),
-                    InlineKeyboardButton(text="✖ Отмена", callback_data=f"in:x:{batch_id}"),
-                ],
-            ])
-        else:
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="✅ Всё верно", callback_data=f"in:ok:{batch_id}"),
-                    InlineKeyboardButton(text="✖ Отмена", callback_data=f"in:x:{batch_id}"),
-                ]
-            ])
-        # оценка
-        hours = sum((it["probe"].duration_sec or 0) for it in classified) / 3600.0
-        if hours > 0.2 or len(classified) > 3:
-            costs = config.cost_table_map
-            whisper = float(costs.get("whisper_per_min") or 0.006) * hours * 60
-            text += (
-                f"\n\nОценка: ~{hours:.1f} ч видео. "
-                f"Субтитры: смотрим при обработке. Whisper при необходимости ~${whisper:.2f}."
-            )
-            kb.inline_keyboard.append([
-                InlineKeyboardButton(text="▶️ Запустить", callback_data=f"in:ok:{batch_id}")
-            ])
-        await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+        await message.answer(
+            self._confirm_text(classified),
+            parse_mode=ParseMode.HTML,
+            reply_markup=self._confirm_kb(batch_id, len(classified)),
+        )
 
     async def on_callback(self, callback: CallbackQuery) -> None:
         data = (callback.data or "").split(":")
@@ -188,9 +207,9 @@ class CourseIntakeFeature(BaseFeature):
             await self._retry_queue(callback, rest)
             return
         batch = self._pending.get(rest.split(":")[0] if action != "ok" else rest)
-        if action in ("ok", "x", "ls", "tp"):
+        if action in ("ok", "x", "ls", "tp", "md", "cf"):
             batch = self._pending.get(rest)
-        if not batch and action not in ("k", "t"):
+        if not batch and action not in ("k", "t", "m"):
             await callback.answer("Сессия устарела", show_alert=True)
             return
         if action == "x":
@@ -204,14 +223,24 @@ class CourseIntakeFeature(BaseFeature):
         if action == "ls":
             await self._show_lessons(callback, rest)
             return
+        if action == "md":
+            await self._show_modules(callback, rest)
+            return
+        if action == "cf":
+            await self._redraw_confirm(callback, rest)
+            return
         if action == "tp":
             await self._show_types(callback, rest)
             return
         if action == "k":
-            # in:k:batch:lesson_key
             parts = rest.split(":", 1)
             if len(parts) == 2:
                 await self._set_lesson(callback, parts[0], parts[1])
+            return
+        if action == "m":
+            parts = rest.split(":", 1)
+            if len(parts) == 2:
+                await self._set_module(callback, parts[0], parts[1])
             return
         if action == "t":
             parts = rest.split(":", 1)
@@ -243,11 +272,18 @@ class CourseIntakeFeature(BaseFeature):
                         product_id=product.id,
                         lesson_key=clf.lesson_key,
                         lesson_no=b or a,
-                        module_no=a if b else None,
+                        module_no=a if b else clf.module_no,
                         title=title,
                     )
                 else:
                     lesson_id = existing_l["id"]
+            meta = {}
+            if it.get("password"):
+                meta["zoom_password"] = it["password"]
+            if clf.module_no and not clf.lesson_key:
+                meta["module_only"] = True
+            if (it.get("description") or "").strip():
+                meta["description"] = str(it["description"]).strip()[:4000]
             # duplicate duration check
             if lesson_id and probe.duration_sec:
                 dup = await stor.find_similar_video_source(
@@ -264,6 +300,7 @@ class CourseIntakeFeature(BaseFeature):
                 origin=it["host"],
                 kind=clf.kind,
                 lesson_id=lesson_id,
+                module_no=clf.module_no,
                 title=probe.title or probe.url,
                 url=probe.url,
                 video_id=probe.video_id or None,
@@ -271,6 +308,7 @@ class CourseIntakeFeature(BaseFeature):
                 recorded_on=clf.recorded_on or probe.recorded_on,
                 status="new",
                 added_by=callback.from_user.id,
+                metadata=meta,
                 intake_chat_id=callback.message.chat.id,
                 intake_message_id=callback.message.message_id,
             )
@@ -299,7 +337,30 @@ class CourseIntakeFeature(BaseFeature):
                 row = []
         if row:
             rows.append(row)
-        rows.append([InlineKeyboardButton(text="⬅ Назад", callback_data=f"in:ok:{batch_id}")])
+        rows.append([InlineKeyboardButton(text="⬅ Назад", callback_data=f"in:cf:{batch_id}")])
+        await callback.message.edit_reply_markup(
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows)
+        )
+        await callback.answer()
+
+    async def _show_modules(self, callback: CallbackQuery, batch_id: str) -> None:
+        lessons = await self._app.user_storage.list_course_lessons(active_product_id())
+        nums = sorted({int(r["module_no"]) for r in lessons if r.get("module_no")})
+        if not nums:
+            nums = list(range(1, 5))
+        rows = []
+        row = []
+        for n in nums:
+            row.append(InlineKeyboardButton(
+                text=f"М{n}",
+                callback_data=f"in:m:{batch_id}:{n}",
+            ))
+            if len(row) == 4:
+                rows.append(row)
+                row = []
+        if row:
+            rows.append(row)
+        rows.append([InlineKeyboardButton(text="⬅ Назад", callback_data=f"in:cf:{batch_id}")])
         await callback.message.edit_reply_markup(
             reply_markup=InlineKeyboardMarkup(inline_keyboard=rows)
         )
@@ -312,22 +373,63 @@ class CourseIntakeFeature(BaseFeature):
         ], [
             InlineKeyboardButton(text="Эфир", callback_data=f"in:t:{batch_id}:broadcast"),
             InlineKeyboardButton(text="Другое", callback_data=f"in:t:{batch_id}:other"),
+        ], [
+            InlineKeyboardButton(text="⬅ Назад", callback_data=f"in:cf:{batch_id}"),
         ]]
         await callback.message.edit_reply_markup(
             reply_markup=InlineKeyboardMarkup(inline_keyboard=rows)
         )
         await callback.answer()
 
+    async def _redraw_confirm(
+        self, callback: CallbackQuery, batch_id: str, *, notice: str = ""
+    ) -> None:
+        batch = self._pending.get(batch_id)
+        if not batch:
+            await callback.answer("Сессия устарела", show_alert=True)
+            return
+        items = batch["items"]
+        try:
+            await callback.message.edit_text(
+                self._confirm_text(items),
+                parse_mode=ParseMode.HTML,
+                reply_markup=self._confirm_kb(batch_id, len(items)),
+            )
+        except Exception:
+            try:
+                await callback.message.edit_reply_markup(
+                    reply_markup=self._confirm_kb(batch_id, len(items))
+                )
+            except Exception:
+                pass
+        await callback.answer(notice)
+
     async def _set_lesson(self, callback: CallbackQuery, batch_id: str, key: str) -> None:
         batch = self._pending.get(batch_id)
         if not batch:
             await callback.answer("Сессия устарела", show_alert=True)
             return
+        a, b = lesson_sort_key(key)
         for it in batch["items"]:
             it["clf"].lesson_key = key
-        await callback.answer(f"Урок {key}")
-        # re-show confirm - simplified: accept
-        await self._accept_batch(callback, batch_id)
+            if b:
+                it["clf"].module_no = a
+        await self._redraw_confirm(callback, batch_id, notice=f"Урок {key}")
+
+    async def _set_module(self, callback: CallbackQuery, batch_id: str, num: str) -> None:
+        batch = self._pending.get(batch_id)
+        if not batch:
+            await callback.answer("Сессия устарела", show_alert=True)
+            return
+        try:
+            n = int(num)
+        except ValueError:
+            await callback.answer()
+            return
+        for it in batch["items"]:
+            it["clf"].module_no = n
+            it["clf"].lesson_key = ""
+        await self._redraw_confirm(callback, batch_id, notice=f"Модуль {n}")
 
     async def _set_kind(self, callback: CallbackQuery, batch_id: str, kind: str) -> None:
         batch = self._pending.get(batch_id)
@@ -336,8 +438,7 @@ class CourseIntakeFeature(BaseFeature):
             return
         for it in batch["items"]:
             it["clf"].kind = kind
-        await callback.answer("Тип обновлён")
-        await self._accept_batch(callback, batch_id)
+        await self._redraw_confirm(callback, batch_id, notice="Тип обновлён")
 
     async def _reprocess(self, callback: CallbackQuery, source_id: str) -> None:
         try:

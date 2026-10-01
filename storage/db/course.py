@@ -156,15 +156,15 @@ class CourseMixin:
                 await conn.execute(
                     """
                     INSERT INTO course_sources (
-                        id, product_id, origin, kind, lesson_id, title,
+                        id, product_id, origin, kind, lesson_id, module_no, title,
                         disk_path, disk_etag, video_id, url, alt_urls,
                         platform, duration_sec, recorded_on, status,
                         added_by, metadata, intake_chat_id, intake_message_id
                     ) VALUES (
-                        $1,$2,$3,$4,$5,$6,
-                        $7,$8,$9,$10,$11::jsonb,
-                        $12,$13,$14,$15,
-                        $16,$17::jsonb,$18,$19
+                        $1,$2,$3,$4,$5,$6,$7,
+                        $8,$9,$10,$11,$12::jsonb,
+                        $13,$14,$15,$16,
+                        $17,$18::jsonb,$19,$20
                     )
                     """,
                     sid,
@@ -172,6 +172,7 @@ class CourseMixin:
                     fields.get("origin") or "disk",
                     fields.get("kind") or "other",
                     fields.get("lesson_id"),
+                    fields.get("module_no"),
                     (fields.get("title") or "")[:500],
                     fields.get("disk_path"),
                     fields.get("disk_etag") or "",
@@ -287,7 +288,8 @@ class CourseMixin:
                      WHEN 'youtube' THEN 0
                      WHEN 'vimeo' THEN 1
                      WHEN 'kinescope' THEN 2
-                     ELSE 3
+                     WHEN 'zoom' THEN 3
+                     ELSE 4
                  END
                  LIMIT 1
                 """,
@@ -308,6 +310,7 @@ class CourseMixin:
             "origin",
             "kind",
             "lesson_id",
+            "module_no",
             "title",
             "disk_path",
             "disk_etag",

@@ -112,6 +112,16 @@ class CourseDiskSyncFeature(BaseFeature):
         present_paths = set(scan.listed_paths)
         for item in scan.items:
             rf, role = item.remote, item.role
+            if role.link_list:
+                present_paths.discard(rf.path)
+                n, c, s, media = await self._sync_video_link_file(
+                    dav, stor, item, present_paths
+                )
+                new_n += n
+                changed_n += c
+                same_n += s
+                media_new += media
+                continue
             present_paths.add(rf.path)
             existing = await stor.get_course_source_by_disk_path(rf.path)
             if existing:
@@ -173,6 +183,7 @@ class CourseDiskSyncFeature(BaseFeature):
                 origin="disk",
                 kind=role.kind,
                 lesson_id=lesson_id,
+                module_no=role.module_no,
                 title=rf.name,
                 disk_path=rf.path,
                 disk_etag=file_fingerprint(
@@ -198,9 +209,14 @@ class CourseDiskSyncFeature(BaseFeature):
         for row in known:
             if scan.errors:
                 break
-            if row.get("origin") != "disk" or not row.get("disk_path"):
+            origin = row.get("origin") or ""
+            dp = row.get("disk_path") or ""
+            if not dp:
                 continue
-            if row["disk_path"] in present_paths:
+            is_link_child = "::" in dp
+            if origin != "disk" and not is_link_child:
+                continue
+            if dp in present_paths:
                 continue
             if row.get("status") == "deleted":
                 continue
@@ -244,6 +260,145 @@ class CourseDiskSyncFeature(BaseFeature):
         if need_confirm and studio:
             await studio.ask_lesson_for_files(need_confirm)
         return summary
+
+    async def _sync_video_link_file(
+        self,
+        dav: YandexDiskWebDAV,
+        stor: Any,
+        item: Any,
+        present_paths: set,
+    ) -> tuple[int, int, int, int]:
+        from course.disk_identity import content_changed, file_fingerprint
+        from course.video_hosts import adapter_for
+        from course.video_links import link_disk_key, parse_video_link_file
+
+        rf, role = item.remote, item.role
+        new_n = changed_n = same_n = media_n = 0
+        try:
+            text = await dav.get_text(rf.path)
+        except Exception as e:
+            logger.warning("link file read %s: %s", rf.path, e)
+            return 0, 0, 0, 0
+        entries = parse_video_link_file(text)
+        fp = file_fingerprint(size=rf.size, modified=rf.modified, etag=rf.etag)
+        for i, entry in enumerate(entries):
+            child = link_disk_key(rf.path, i)
+            present_paths.add(child)
+            lesson_key = entry.lesson_key or role.lesson_key
+            module_no = (
+                entry.module_no if entry.module_no is not None else role.module_no
+            )
+            kind = entry.kind or role.kind or "other"
+            lesson_id = None
+            if lesson_key:
+                a, b = lesson_sort_key(lesson_key)
+                lesson_id = await stor.upsert_course_lesson(
+                    product_id=role.product_id,
+                    lesson_key=lesson_key,
+                    lesson_no=b or a,
+                    module_no=a if b else module_no,
+                    title=role.lesson_title,
+                    disk_path=None,
+                )
+                if module_no is None and b:
+                    module_no = a
+            adapter = adapter_for(entry.host, video_password=entry.password)
+            probe = None
+            try:
+                probe = await adapter.probe(entry.url)
+            except Exception as e:
+                logger.warning("link probe %s: %s", entry.url, e)
+            video_id = (probe.video_id if probe else "") or ""
+            existing = await stor.get_course_source_by_disk_path(child)
+            if not existing and video_id:
+                by_vid = await stor.get_course_source_by_video(entry.host, video_id)
+                if by_vid:
+                    existing = by_vid
+            meta = dict(existing.get("metadata") or {}) if existing else {}
+            if entry.password:
+                meta["zoom_password"] = entry.password
+            if module_no and not lesson_key:
+                meta["module_only"] = True
+            if entry.description:
+                meta["description"] = entry.description[:4000]
+            elif "description" in meta:
+                meta.pop("description", None)
+            title = (probe.title if probe else "") or entry.url
+            duration = probe.duration_sec if probe else None
+            recorded = role.recorded_on or (probe.recorded_on if probe else None)
+            if existing:
+                url_changed = (existing.get("url") or "") != entry.url
+                old_desc = str((existing.get("metadata") or {}).get("description") or "")
+                desc_changed = old_desc != (entry.description or "")
+                real_change = content_changed(
+                    existing.get("disk_etag") or "",
+                    size=rf.size,
+                    modified=rf.modified,
+                    etag=rf.etag,
+                )
+                if not real_change and not url_changed and not desc_changed:
+                    fields: dict = {}
+                    if (existing.get("disk_etag") or "") != fp:
+                        fields["disk_etag"] = fp
+                    if existing.get("disk_path") != child:
+                        fields["disk_path"] = child
+                    if existing.get("status") == "deleted":
+                        fields["status"] = (
+                            "done"
+                            if existing.get("processed_at") or existing.get("chars_count")
+                            else "new"
+                        )
+                        fields["error_message"] = ""
+                    if fields:
+                        await stor.update_course_source(existing["id"], **fields)
+                    same_n += 1
+                    continue
+                await stor.archive_cards_for_source(existing["id"])
+                rs = getattr(self._app, "rag_stack", None)
+                if rs is not None:
+                    rs.materials.delete_by_source(str(existing["id"]))
+                await stor.update_course_source(
+                    existing["id"],
+                    origin=entry.host,
+                    kind=kind,
+                    lesson_id=lesson_id,
+                    module_no=module_no,
+                    title=title,
+                    url=entry.url,
+                    video_id=video_id or None,
+                    duration_sec=duration,
+                    recorded_on=recorded,
+                    disk_path=child,
+                    disk_etag=fp,
+                    metadata=meta,
+                    status="new",
+                    attempts=0,
+                    error_message="",
+                )
+                changed_n += 1
+                media_n += 1
+                continue
+            sid = await stor.insert_course_source(
+                product_id=role.product_id,
+                origin=entry.host,
+                kind=kind,
+                lesson_id=lesson_id,
+                module_no=module_no,
+                title=title,
+                url=entry.url,
+                video_id=video_id or None,
+                duration_sec=duration,
+                recorded_on=recorded,
+                disk_path=child,
+                disk_etag=fp,
+                status="new",
+                added_by=config.SUPER_ADMIN_ID or 0,
+                metadata=meta,
+            )
+            if sid:
+                new_n += 1
+                media_n += 1
+        return new_n, changed_n, same_n, media_n
 
     async def cb_start_batch(self, callback: CallbackQuery) -> None:
         await callback.answer("Очередь запущена")

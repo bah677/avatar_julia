@@ -48,6 +48,8 @@ def format_chunk_heading(
     product_name: str,
     lesson_key: str = "",
     lesson_title: str = "",
+    module_no: Optional[int] = None,
+    extra: str = "",
     kind: str = "",
     start_sec: Optional[float] = None,
     end_sec: Optional[float] = None,
@@ -58,12 +60,15 @@ def format_chunk_heading(
     if lesson_key:
         title = f" «{lesson_title}»" if lesson_title else ""
         lesson = f" · Урок {lesson_key}{title}"
+    elif module_no is not None:
+        lesson = f" · Модуль {int(module_no)}"
     loc = ""
     if start_sec is not None:
         loc = f" · {_fmt_mmss(start_sec)}–{_fmt_mmss(end_sec if end_sec is not None else start_sec)}"
     elif page is not None:
         loc = f" · стр. {int(page)}"
-    return f"[{product_name}{lesson} · {kind_l}{loc}]"
+    extra_s = f" · {extra}" if extra else ""
+    return f"[{product_name}{lesson} · {kind_l}{extra_s}{loc}]"
 
 
 def _fmt_mmss(sec: float) -> str:
