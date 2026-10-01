@@ -124,6 +124,8 @@ class MessagingFeature(BaseFeature):
 
         if intake and await intake.try_handle_links(message, text or message.caption or ""):
             return
+        if intake and await intake.try_handle_password(message, text or message.caption or ""):
+            return
 
         if getattr(app_config, "COURSE_ENABLED", False) and self.creative_coord:
             if await self.creative_coord.try_handle_private_message(message, text):

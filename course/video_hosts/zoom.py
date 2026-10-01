@@ -9,7 +9,7 @@ import re
 import sys
 from pathlib import Path
 from typing import List, Optional
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from course.models import VideoProbe
 from course.speech import SpeechSegment
@@ -29,9 +29,25 @@ def parse_zoom_id(url: str) -> str:
     return m.group(1) if m else ""
 
 
+def normalize_zoom_url(url: str) -> str:
+    """Play-ссылка из браузера часто содержит настоящий /rec/share/ в originRequestUrl."""
+    raw = (url or "").strip()
+    if not raw:
+        return ""
+    try:
+        nested = (parse_qs(urlparse(raw).query).get("originRequestUrl") or [""])[0]
+        if nested:
+            nested = unquote(nested)
+            if ZOOM_ID_RE.search(nested):
+                raw = nested
+    except Exception:
+        pass
+    return raw.rstrip(").,;")
+
+
 def password_from_url(url: str) -> str:
     try:
-        q = parse_qs(urlparse(url or "").query)
+        q = parse_qs(urlparse(normalize_zoom_url(url) or url or "").query)
     except Exception:
         return ""
     for key in ("pwd", "password", "passcode"):
@@ -49,6 +65,7 @@ class ZoomAdapter(VideoHostAdapter):
         self._ytdlp = YtDlpAdapter("zoom")
 
     async def probe(self, url: str) -> Optional[VideoProbe]:
+        url = normalize_zoom_url(url) or url
         pwd = self._password or password_from_url(url)
         extra = ["--video-password", pwd] if pwd else []
         from course.video_hosts.ytdlp import _ytdlp_json, probe_from_info
@@ -60,17 +77,17 @@ class ZoomAdapter(VideoHostAdapter):
                 return None
             return VideoProbe(host="zoom", video_id=vid, url=url, title="Zoom запись")
         probe = probe_from_info(info, "zoom", url)
-        if not probe.video_id:
-            return VideoProbe(
-                host="zoom",
-                video_id=parse_zoom_id(url) or probe.video_id,
-                url=probe.url or url,
-                title=probe.title or "Zoom запись",
-                duration_sec=probe.duration_sec,
-                recorded_on=probe.recorded_on,
-                description=probe.description,
-            )
-        return probe
+        return VideoProbe(
+            host="zoom",
+            video_id=parse_zoom_id(url) or probe.video_id,
+            url=url,
+            title=probe.title or "Zoom запись",
+            duration_sec=probe.duration_sec,
+            recorded_on=probe.recorded_on,
+            description=probe.description,
+            chapters=probe.chapters,
+            has_subtitles=probe.has_subtitles,
+        )
 
     async def fetch_subtitles(self, url: str, probe=None) -> Optional[List[SpeechSegment]]:
         return await self._ytdlp.fetch_subtitles(url, probe)
@@ -79,6 +96,7 @@ class ZoomAdapter(VideoHostAdapter):
         dest = Path(dest_dir)
         dest.mkdir(parents=True, exist_ok=True)
         out_template = str(dest / "audio.%(ext)s")
+        url = normalize_zoom_url(url) or url
         pwd = self._password or password_from_url(url)
         cmd = [
             sys.executable,

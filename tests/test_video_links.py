@@ -8,10 +8,11 @@ from course.classify import classify_by_rules
 from course.disk_layout import is_video_link_filename
 from course.match_scope import match_scope
 from course.video_hosts.ytdlp import detect_host, extract_video_urls
-from course.video_hosts.zoom import parse_zoom_id, password_from_url
+from course.video_hosts.zoom import normalize_zoom_url, parse_zoom_id, password_from_url
 from course.video_links import (
     extract_video_description,
     extract_video_password,
+    is_password_followup,
     link_disk_key,
     parse_video_link_file,
 )
@@ -94,6 +95,23 @@ class PasswordAndZoomTests(unittest.TestCase):
         self.assertEqual(parse_zoom_id(url), "AbC_12.3")
         self.assertEqual(password_from_url(url), "zz")
         self.assertEqual(detect_host(url), "zoom")
+
+    def test_normalize_play_embed_share(self) -> None:
+        from urllib.parse import quote
+
+        share = "https://us06web.zoom.us/rec/share/xxxxx.yyyy"
+        play = (
+            "https://us06web.zoom.us/rec/play/abc.def"
+            f"?originRequestUrl={quote(share, safe='')}"
+        )
+        self.assertEqual(normalize_zoom_url(play), share)
+        pairs = extract_video_urls(play + "\nпароль: 111")
+        self.assertEqual(pairs[0], ("zoom", share))
+
+    def test_password_followup(self) -> None:
+        self.assertTrue(is_password_followup("пароль: w8M=6u=x"))
+        self.assertFalse(is_password_followup("https://zoom.us/rec/share/x пароль: 1"))
+        self.assertFalse(is_password_followup("напиши пост про паузу"))
 
     def test_extract_video_urls_order(self) -> None:
         pairs = extract_video_urls(

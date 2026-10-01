@@ -72,14 +72,20 @@ def extract_kinescope_urls(text: str) -> list[str]:
 
 
 def extract_zoom_urls(text: str) -> list[str]:
-    return [
-        m.group(0).rstrip(").,;")
-        for m in re.finditer(
-            r"https?://(?:[\w-]+\.)?zoom\.us/rec/(?:share|play|clip)/[^\s]+",
-            text or "",
-            re.IGNORECASE,
-        )
-    ]
+    from course.video_hosts.zoom import normalize_zoom_url
+
+    out = []
+    seen = set()
+    for m in re.finditer(
+        r"https?://(?:[\w-]+\.)?zoom\.us/rec/(?:share|play|clip)/[^\s]+",
+        text or "",
+        re.IGNORECASE,
+    ):
+        url = normalize_zoom_url(m.group(0).rstrip(").,;"))
+        if url and url not in seen:
+            seen.add(url)
+            out.append(url)
+    return out
 
 
 def extract_video_urls(text: str) -> list[tuple[str, str]]:

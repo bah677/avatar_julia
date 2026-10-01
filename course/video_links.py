@@ -87,6 +87,16 @@ def extract_video_description(text: str) -> str:
     return "\n".join(parts).strip()[:4000]
 
 
+def is_password_followup(text: str) -> bool:
+    """Сообщение только с паролем, без ссылки на видео."""
+    blob = (text or "").strip()
+    if not blob or extract_video_urls(blob):
+        return False
+    if not extract_video_password(blob):
+        return False
+    return len(blob) <= 240
+
+
 def _is_meta_line(line: str) -> bool:
     if _TYPE_RE.match(line) or _DESC_RE.match(line):
         return True

@@ -23,7 +23,11 @@ from course.models import KIND_LABELS, VideoProbe
 from course.products import active_product, active_product_id, scoped_product_ids
 from course.video_hosts import adapter_for
 from course.video_hosts.ytdlp import YtDlpAdapter, extract_video_urls
-from course.video_links import extract_video_description, extract_video_password
+from course.video_links import (
+    extract_video_description,
+    extract_video_password,
+    is_password_followup,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +94,11 @@ class CourseIntakeFeature(BaseFeature):
                 continue
             for probe in probes:
                 existing = None
-                if probe.video_id:
+                if probe.video_id or probe.url:
+                    existing = await self._app.user_storage.find_course_source_video(
+                        host, video_id=probe.video_id or "", url=probe.url or url
+                    )
+                if not existing and probe.video_id:
                     existing = await self._app.user_storage.get_course_source_by_video(
                         host, probe.video_id
                     )
@@ -106,6 +114,21 @@ class CourseIntakeFeature(BaseFeature):
             return True
         if items[0]["existing"] and len(items) == 1:
             ex = items[0]["existing"]
+            pwd = items[0].get("password") or ""
+            st = ex.get("status") or ""
+            if pwd or st in ("error", "new", "fetching"):
+                await self._kick_source(
+                    UUID(str(ex["id"])),
+                    password=pwd,
+                    url=items[0]["probe"].url,
+                    video_id=items[0]["probe"].video_id or "",
+                    description=items[0].get("description") or "",
+                    chat_id=message.chat.id,
+                    message_id=message.message_id,
+                )
+                extra = " с паролем" if pwd else ""
+                await message.answer(f"Запускаю обработку{extra}.")
+                return True
             kb = InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(
                     text="🔁 Переобработать",
@@ -113,13 +136,76 @@ class CourseIntakeFeature(BaseFeature):
                 )
             ]])
             await message.answer(
-                f"Уже в базе (урок {html_escape(str(ex.get('lesson_id') or '—'))}, "
-                f"{ex.get('created_at')})",
+                "Уже в базе. Если запись не разобралась — нажмите «Переобработать» "
+                "или пришлите ссылку ещё раз с <code>пароль: …</code>.",
+                parse_mode=ParseMode.HTML,
                 reply_markup=kb,
             )
             return True
         await self._classify_and_confirm(message, items)
         return True
+
+    async def try_handle_password(self, message: Message, text: str) -> bool:
+        if not is_password_followup(text or ""):
+            return False
+        uid = message.from_user.id
+        if not await is_admin_or_super(self._app.user_storage, uid):
+            return False
+        pwd = extract_video_password(text)
+        src = await self._app.user_storage.find_recent_zoom_source(added_by=uid)
+        if not src or src.get("status") not in ("error", "new", "fetching"):
+            await message.answer(
+                "Сейчас нет записи Zoom, которая ждёт пароль. "
+                "Пришлите ссылку и пароль в одном сообщении."
+            )
+            return True
+        await self._kick_source(
+            UUID(str(src["id"])),
+            password=pwd,
+            chat_id=message.chat.id,
+            message_id=message.message_id,
+        )
+        await message.answer("Пароль принял, запускаю обработку.")
+        return True
+
+    async def _kick_source(
+        self,
+        source_id: UUID,
+        *,
+        password: str = "",
+        url: str = "",
+        video_id: str = "",
+        description: str = "",
+        chat_id: Optional[int] = None,
+        message_id: Optional[int] = None,
+    ) -> None:
+        stor = self._app.user_storage
+        src = await stor.get_course_source(source_id)
+        meta = dict((src or {}).get("metadata") or {})
+        if password:
+            meta["zoom_password"] = password
+        if description:
+            meta["description"] = description[:4000]
+        fields: Dict[str, Any] = {
+            "status": "new",
+            "attempts": 0,
+            "next_attempt_at": None,
+            "error_message": "",
+            "metadata": meta,
+        }
+        if url:
+            fields["url"] = url
+        if video_id:
+            fields["video_id"] = video_id
+        if chat_id is not None:
+            fields["intake_chat_id"] = chat_id
+        if message_id is not None:
+            fields["intake_message_id"] = message_id
+        await stor.update_course_source(source_id, **fields)
+        rs = getattr(self._app, "rag_stack", None)
+        if rs is not None:
+            rs.materials.delete_by_source(str(source_id))
+        await stor.archive_cards_for_source(source_id)
 
     def _confirm_text(self, classified: list) -> str:
         product = active_product()
@@ -446,13 +532,7 @@ class CourseIntakeFeature(BaseFeature):
         except ValueError:
             await callback.answer("Некорректный id")
             return
-        await self._app.user_storage.update_course_source(
-            sid, status="new", attempts=0, error_message=""
-        )
-        rs = getattr(self._app, "rag_stack", None)
-        if rs is not None:
-            rs.materials.delete_by_source(str(sid))
-        await self._app.user_storage.archive_cards_for_source(sid)
+        await self._kick_source(sid)
         await callback.answer("В очередь")
 
     async def cmd_queue(self, message: Message) -> None:
@@ -488,9 +568,7 @@ class CourseIntakeFeature(BaseFeature):
         except ValueError:
             await callback.answer()
             return
-        await self._app.user_storage.update_course_source(
-            sid, status="new", attempts=0, next_attempt_at=None, error_message=""
-        )
+        await self._kick_source(sid)
         await callback.answer("Повтор")
 
     async def cmd_remine(self, message: Message) -> None:

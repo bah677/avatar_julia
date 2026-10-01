@@ -148,6 +148,12 @@ class CourseWorker:
         ):
             adapter = adapter_for(origin, video_password=str(meta.get("zoom_password") or ""))
             url = src.get("url") or src.get("disk_path") or ""
+            if origin == "zoom":
+                from course.video_hosts.zoom import normalize_zoom_url, password_from_url
+
+                url = normalize_zoom_url(url) or url
+                pwd = str(meta.get("zoom_password") or "") or password_from_url(url)
+                adapter = adapter_for("zoom", video_password=pwd)
             async with self._fetch_lock:
                 segs, method = await transcribe_source_video(
                     adapter=adapter,
@@ -173,9 +179,9 @@ class CourseWorker:
                     )
                 elif origin == "zoom":
                     hint = (
-                        " Для закрытой записи Zoom укажите пароль: "
-                        "«пароль: …» в сообщении/файле или ?pwd= в ссылке "
-                        "облачного хранилища (/rec/share/ или /rec/play/)."
+                        " Пришлите пароль следующим сообщением: «пароль: …» "
+                        "или ссылку ещё раз с паролем / ?pwd= "
+                        "(/rec/share/ или /rec/play/)."
                     )
                 raise RuntimeError(
                     f"Пустая расшифровка ({origin}, method={method or 'none'}).{hint}"

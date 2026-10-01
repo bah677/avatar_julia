@@ -214,6 +214,54 @@ class CourseMixin:
             )
         return _source_row(row) if row else None
 
+    async def find_course_source_video(
+        self,
+        origin: str,
+        *,
+        video_id: str = "",
+        url: str = "",
+    ) -> Optional[Dict[str, Any]]:
+        vid = (video_id or "").strip()
+        u = (url or "").strip()
+        if not vid and not u:
+            return None
+        async with self.get_connection() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT * FROM course_sources
+                 WHERE origin = $1
+                   AND status <> 'deleted'
+                   AND (
+                        ($2 <> '' AND video_id = $2)
+                     OR ($3 <> '' AND url = $3)
+                     OR ($2 <> '' AND position($2 in coalesce(url, '')) > 0)
+                     OR ($3 <> '' AND video_id IS NOT NULL AND video_id <> ''
+                         AND position(video_id in $3) > 0)
+                   )
+                 ORDER BY updated_at DESC
+                 LIMIT 1
+                """,
+                origin,
+                vid,
+                u,
+            )
+        return _source_row(row) if row else None
+
+    async def find_recent_zoom_source(self, *, added_by: int) -> Optional[Dict[str, Any]]:
+        async with self.get_connection() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT * FROM course_sources
+                 WHERE origin = 'zoom'
+                   AND added_by = $1
+                   AND status <> 'deleted'
+                 ORDER BY updated_at DESC
+                 LIMIT 1
+                """,
+                int(added_by),
+            )
+        return _source_row(row) if row else None
+
     async def get_course_source_by_disk_path(self, disk_path: str) -> Optional[Dict[str, Any]]:
         async with self.get_connection() as conn:
             row = await conn.fetchrow(
