@@ -141,6 +141,27 @@ def parse_lesson_key_from_text(text: str) -> str:
     return str(a)
 
 
+_MODULE_REPLY_RE = re.compile(
+    r"^\s*(?:модул[ьяею]|раздел[аеу]?|module)\s*[:\-–—]?\s*(\d{1,2})\s*\.?\s*$",
+    re.IGNORECASE,
+)
+
+
+def parse_scope_reply(text: str) -> tuple[str, Optional[int]]:
+    """Ответ в личке: урок («2.4») или целый модуль («модуль 2»)."""
+    raw = (text or "").strip()
+    if not raw:
+        return "", None
+    m = _MODULE_REPLY_RE.match(raw)
+    if m:
+        return "", int(m.group(1))
+    key = parse_lesson_key_from_text(raw)
+    if not key:
+        return "", None
+    a, b = lesson_sort_key(key)
+    return key, (a if b else None)
+
+
 def parse_date_from_name(name: str) -> Optional[date]:
     m = DATE_IN_NAME_RE.search(name or "")
     if not m:

@@ -8,6 +8,7 @@ from course.disk_layout import (
     classify_disk_path,
     parse_lesson_folder,
     parse_lesson_key_from_text,
+    parse_scope_reply,
 )
 from course.products import Product, ProductRegistry
 
@@ -53,6 +54,13 @@ class DiskLayoutTests(unittest.TestCase):
         self.assertEqual(parse_lesson_key_from_text("Урок 1.6 начинается"), "1.6")
         self.assertEqual(parse_lesson_key_from_text("Практика 2.4 Zoom"), "2.4")
         self.assertEqual(parse_lesson_key_from_text("Урок_1_4_конспект.pdf"), "1.4")
+
+    def test_parse_scope_reply_module_or_lesson(self) -> None:
+        self.assertEqual(parse_scope_reply("модуль 2"), ("", 2))
+        self.assertEqual(parse_scope_reply("модуль: 2"), ("", 2))
+        self.assertEqual(parse_scope_reply("2.4"), ("2.4", 2))
+        self.assertEqual(parse_scope_reply("урок 2.4"), ("2.4", 2))
+        self.assertEqual(parse_scope_reply("просто текст"), ("", None))
 
     def test_summary_in_lesson_folder(self) -> None:
         role = _role(

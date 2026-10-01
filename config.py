@@ -174,6 +174,8 @@ class AppConfig:
     # Legacy: одна группа. Если задан RAG_GROUPS — этот параметр игнорируется.
     RAG_GROUP_CHAT_ID: int = 0
     RAG_MIN_INDEX_CHARS: int = 300
+    # Живой чат (не библиотека топиков): минимальная длина реплики для RAG.
+    RAG_CHAT_MIN_INDEX_CHARS: int = 40
     RAG_TAG_MODEL: str = "gpt-4o-mini"
     # Подробные логи индекса RAG из группы (см. main._setup_logging + RAG_INDEXER_DEBUG в .env).
     RAG_INDEXER_DEBUG: bool = False
@@ -185,6 +187,9 @@ class AppConfig:
     # Группы через «;», топики через «,» после «:». Без топиков = все.
     # Приоритет над RAG_GROUP_CHAT_ID + RAG_GROUP_TOPIC_IDS.
     RAG_GROUPS: str = ""
+    # Живые чаты для чтения переписки (эксперт vs участники). Формат как RAG_GROUPS.
+    # Пример: -1003903313717:6 — только топик 6. Пусто = не читать живые чаты.
+    RAG_LIVE_CHATS: str = ""
     # Топики (message_thread_id), которые никогда не индексировать, во всех RAG-группах.
     RAG_EXCLUDE_TOPIC_IDS: str = ""
     # Группы/топики с отзывами клиентов (формат как RAG_GROUPS). Индексируются в ту же Chroma.
@@ -401,6 +406,11 @@ class AppConfig:
         )
 
     @property
+    def rag_live_chats_map(self) -> Dict[int, Optional[frozenset[int]]]:
+        """Живые чаты переписки: {chat_id: frozenset(topic_ids) | None}."""
+        return _parse_rag_groups(self.RAG_LIVE_CHATS)
+
+    @property
     def rag_testimonial_groups_map(self) -> Dict[int, Optional[frozenset[int]]]:
         """Группы с отзывами клиентов: {chat_id: frozenset(topic_ids) | None}."""
         return _parse_rag_groups(self.RAG_TESTIMONIAL_GROUPS)
@@ -557,7 +567,7 @@ def _parse_rag_groups(
             else:
                 gid_raw, topics_raw = entry, ""
             try:
-                gid = int(gid_raw.strip(), 10)
+                gid = _normalize_supergroup_chat_id(int(gid_raw.strip(), 10))
             except ValueError:
                 _log.warning("RAG_GROUPS: пропуск нечислового chat_id %r", gid_raw)
                 continue
@@ -636,12 +646,16 @@ def load_app_config() -> AppConfig:
         RAG_MIN_INDEX_CHARS=_safe_int_env(
             "RAG_MIN_INDEX_CHARS", 300, min_v=1, max_v=50_000
         ),
+        RAG_CHAT_MIN_INDEX_CHARS=_safe_int_env(
+            "RAG_CHAT_MIN_INDEX_CHARS", 40, min_v=1, max_v=50_000
+        ),
         RAG_TAG_MODEL=os.getenv("RAG_TAG_MODEL", "gpt-4o-mini").strip()
         or "gpt-4o-mini",
         RAG_INDEXER_DEBUG=_env_flag_true("RAG_INDEXER_DEBUG", default=False),
         RAG_GROUP_INDEX_REPLIES=_env_flag_true("RAG_GROUP_INDEX_REPLIES", default=True),
         RAG_GROUP_TOPIC_IDS=(os.getenv("RAG_GROUP_TOPIC_IDS") or "").strip(),
         RAG_GROUPS=(os.getenv("RAG_GROUPS") or "").strip(),
+        RAG_LIVE_CHATS=(os.getenv("RAG_LIVE_CHATS") or "").strip(),
         RAG_EXCLUDE_TOPIC_IDS=(os.getenv("RAG_EXCLUDE_TOPIC_IDS") or "").strip(),
         RAG_TESTIMONIAL_GROUPS=(os.getenv("RAG_TESTIMONIAL_GROUPS") or "").strip(),
         RAG_RETRIEVAL_CONTEXT_USER_TURNS=_safe_int_env(

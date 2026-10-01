@@ -21,6 +21,32 @@ from aiogram.types import CallbackQuery, Message, Update
 
 from bot.access.types import AccessContext, AccessDecision
 
+_GROUPISH_CHAT_TYPES = frozenset({"group", "supergroup", "channel"})
+
+
+def event_chat_type(event_obj) -> str:
+    """Тип чата апдейта: private / group / supergroup / channel / ''."""
+    chat = getattr(event_obj, "chat", None)
+    if chat is None:
+        msg = getattr(event_obj, "message", None)
+        chat = getattr(msg, "chat", None) if msg is not None else None
+    if chat is None:
+        return ""
+    t = getattr(chat, "type", "")
+    if t is None:
+        return ""
+    val = getattr(t, "value", None)
+    if isinstance(val, str) and val:
+        return val.lower()
+    s = str(t)
+    if s.startswith("ChatType."):
+        return s.split(".", 1)[-1].lower()
+    return s.lower()
+
+
+def is_groupish_event(event_obj) -> bool:
+    return event_chat_type(event_obj) in _GROUPISH_CHAT_TYPES
+
 
 class AccessPolicy(ABC):
     """Стратегия: публичность маршрута и итоговый ALLOW / DENY."""
@@ -183,6 +209,11 @@ class LicenseWhitelistPolicy(AccessPolicy):
         if self.is_public_route(ctx.event_type, event_obj):
             return AccessDecision.ALLOW_PUBLIC
 
+        # Группы/каналы: не режем admin-only, иначе бот орёт «доступ запрещён»
+        # участникам и не доходит до индексации RAG.
+        if is_groupish_event(event_obj):
+            return AccessDecision.ALLOW
+
         row = await self.user_storage.get_user(ctx.user_id)
         if row and row.get("is_banned", False):
             return AccessDecision.DENY_BANNED
@@ -208,7 +239,8 @@ def parse_event(update: Update) -> Tuple[Optional[str], Any, Optional[int]]:
     Возвращает (event_type, event_obj, user_id).
     """
     if update.message:
-        return "message", update.message, update.message.from_user.id
+        fu = update.message.from_user
+        return "message", update.message, fu.id if fu else None
     if update.callback_query:
         return (
             "callback",

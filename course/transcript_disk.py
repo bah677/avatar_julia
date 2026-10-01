@@ -3,13 +3,43 @@
 from __future__ import annotations
 
 import logging
+import re
+from pathlib import Path
 from typing import Any, Dict, Optional, Sequence
 
 from course.speech import SpeechSegment
 
 logger = logging.getLogger(__name__)
 
+TRANSCRIPT_PREFIX = "_Расшифровка"
 TRANSCRIPT_FILENAME = "_Расшифровка.txt"
+_UNSAFE_IN_NAME = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')
+_MULTI_SPACE = re.compile(r"\s+")
+_MAX_STEM = 120
+
+
+def transcript_filename(src: Optional[Dict[str, Any]] = None, *, title: str = "") -> str:
+    """Имя рядом с записью: `_Расшифровка Зум 4 с МБТ.txt`."""
+    stem = ""
+    if src:
+        dp = str(src.get("disk_path") or "")
+        if dp and "::" not in dp:
+            stem = Path(dp.rsplit("/", 1)[-1]).stem
+        if not stem:
+            stem = Path(str(src.get("title") or "")).stem
+        if not stem:
+            url = str(src.get("url") or "").split("?", 1)[0]
+            if url and "://" not in url:
+                stem = Path(url.rsplit("/", 1)[-1]).stem
+    if not stem:
+        stem = Path(title or "").stem
+    stem = _UNSAFE_IN_NAME.sub(" ", stem)
+    stem = _MULTI_SPACE.sub(" ", stem).strip(" .")
+    if not stem:
+        stem = "запись"
+    if len(stem) > _MAX_STEM:
+        stem = stem[:_MAX_STEM].rstrip(" .")
+    return f"{TRANSCRIPT_PREFIX} {stem}.txt"
 
 
 def _mmss(sec: float) -> str:
@@ -139,7 +169,7 @@ async def upload_raw_transcript(
     )
     dav = YandexDiskWebDAV(config.YANDEX_DISK_LOGIN, config.YANDEX_DISK_PASSWORD)
     await dav.mkdir_p(folder)
-    remote = f"{folder.rstrip('/')}/{TRANSCRIPT_FILENAME}"
+    remote = f"{folder.rstrip('/')}/{transcript_filename(src)}"
     await dav.put_text(remote, text)
     if lesson and not (lesson.get("disk_path") or "") and src.get("lesson_id"):
         try:

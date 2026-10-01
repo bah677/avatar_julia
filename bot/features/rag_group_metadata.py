@@ -256,6 +256,35 @@ def build_source_identifier(message: Message, raw_text: str, has_file_media: boo
     return "text"
 
 
+def infer_speaker_role(*, user_id: int, expert_ids: FrozenSet[int] | set[int]) -> str:
+    """Кто написал: expert, если Telegram id в списке эксперта/админов бота, иначе client."""
+    try:
+        uid = int(user_id or 0)
+    except (TypeError, ValueError):
+        uid = 0
+    if uid and uid in set(int(x) for x in expert_ids):
+        return "expert"
+    return "client"
+
+
+def speaker_display_name(user: Any, *, expert_name: str = "") -> str:
+    if user is None:
+        return (expert_name or "").strip()
+    first = (getattr(user, "first_name", None) or "").strip()
+    last = (getattr(user, "last_name", None) or "").strip()
+    un = (getattr(user, "username", None) or "").strip()
+    full = " ".join(p for p in (first, last) if p)
+    return full or (f"@{un}" if un else "") or (expert_name or "").strip()
+
+
+def speaker_text_prefix(*, role: str, user: Any = None, expert_name: str = "") -> str:
+    if (role or "") == "expert":
+        who = (expert_name or "").strip() or speaker_display_name(user) or "эксперт"
+        return f"[эксперт {who}]"
+    who = speaker_display_name(user) or "участник"
+    return f"[участник {who}]"
+
+
 def infer_dialog_role(raw_text: str, content_category: str) -> Optional[str]:
     """
     Опционально: при ``content_category == "dialog"`` — client / expert по маркерам строк.

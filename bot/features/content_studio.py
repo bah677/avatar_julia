@@ -836,6 +836,59 @@ class ContentStudioFeature(BaseFeature):
             reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows),
         )
 
+    async def try_handle_scope_reply(self, message: Message, text: str) -> bool:
+        """Ответ на «не удалось определить урок»: «модуль 2» или «2.4»."""
+        from course.disk_layout import lesson_sort_key, parse_scope_reply
+
+        if not self._app or not message.from_user:
+            return False
+        if not await is_admin_or_super(self._app.user_storage, message.from_user.id):
+            return False
+        lesson_key, module_no = parse_scope_reply(text)
+        if not lesson_key and module_no is None:
+            return False
+        stor = self._stor()
+        pending = await stor.list_course_sources_by_product(
+            scoped_product_ids(), statuses=["skipped"]
+        )
+        pending = [
+            r
+            for r in pending
+            if not r.get("lesson_id") and r.get("module_no") is None
+        ]
+        if not pending:
+            return False
+        lesson_id = None
+        if lesson_key:
+            a, b = lesson_sort_key(lesson_key)
+            lesson_id = await stor.upsert_course_lesson(
+                product_id=pending[0].get("product_id") or active_product_id(),
+                lesson_key=lesson_key,
+                lesson_no=b or a,
+                module_no=a if b else module_no,
+                title="",
+                disk_path=None,
+            )
+        for row in pending:
+            has_text = int(row.get("chars_count") or 0) > 0
+            await stor.update_course_source(
+                row["id"],
+                lesson_id=lesson_id,
+                module_no=None if lesson_id else module_no,
+                status="extracted" if has_text else "new",
+                error_message="",
+                attempts=0,
+                next_attempt_at=None,
+            )
+        n = len(pending)
+        if lesson_key:
+            await message.answer(f"Привязала к уроку {lesson_key}: {n} файл(ов). Обрабатываю.")
+        else:
+            await message.answer(
+                f"Привязала к модулю {module_no} целиком: {n} файл(ов). Обрабатываю."
+            )
+        return True
+
     async def ask_lesson_for_files(self, items: list) -> None:
         sid = int(config.SUPER_ADMIN_ID or 0)
         if not sid:
@@ -844,5 +897,7 @@ class ContentStudioFeature(BaseFeature):
         await self._app.bot.send_message(
             sid,
             f"Не удалось определить урок для файлов: {names}\n"
-            "Напишите ключ урока (например 2.4) или положите файлы в папку урока.",
+            "Если запись ко всему разделу — напишите <code>модуль 2</code>.\n"
+            "Если к уроку — ключ вроде <code>2.4</code> или положите файлы в папку урока.",
+            parse_mode=ParseMode.HTML,
         )

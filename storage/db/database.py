@@ -22,6 +22,7 @@ from storage.db.users import UsersMixin
 from storage.db.yandex_disk import YandexDiskMixin
 from storage.db.telemost_mail import TelemostMailMixin
 from storage.db.rag_import_cache import RagImportCacheMixin
+from storage.db.rag_index_chats import RagIndexChatsMixin
 from storage.db.rag_source_visibility import RagSourceVisibilityMixin
 from storage.db.course import CourseMixin
 from storage.db.content_cards import ContentCardsMixin
@@ -47,6 +48,7 @@ class Database(
     TelemostMailMixin,
     RagSourceVisibilityMixin,
     RagImportCacheMixin,
+    RagIndexChatsMixin,
     CourseMixin,
     ContentCardsMixin,
     ContentItemsMixin,

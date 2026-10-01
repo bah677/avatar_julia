@@ -17,9 +17,9 @@ from html import escape as html_escape
 from typing import Any, Dict, List, Optional
 
 from aiogram import Dispatcher, F
-from aiogram.enums import ContentType, ParseMode
+from aiogram.enums import ChatType, ContentType, ParseMode
 from aiogram.exceptions import TelegramNotFound, TelegramRetryAfter
-from aiogram.types import Message
+from aiogram.types import ChatMemberUpdated, Message
 
 from bot.features.base import BaseFeature
 from bot.media_processing.models import MediaType, ProcessedMedia
@@ -31,12 +31,15 @@ from bot.features.forum_topic_name_cache import (
 from bot.features.rag_group_metadata import (
     build_source_identifier,
     infer_dialog_role,
+    infer_speaker_role,
     message_date_iso_utc,
     message_in_rag_groups_scope,
     resolve_content_type_product_category,
+    speaker_text_prefix,
     telegram_internal_message_link,
     testimonial_metadata_overrides,
 )
+from bot.features.rag_tags import extract_content_tags
 from bot.features.rag_source_visibility import (
     SOURCE_TELEGRAM_GROUP,
     apply_source_link_to_metadata,
@@ -189,10 +192,12 @@ class GroupRagIndexerFeature(BaseFeature):
         self._app: Optional[TelegramBotApp] = None
         self._groups_map: dict[int, Optional[frozenset[int]]] = {}
         self._testimonial_groups_map: dict[int, Optional[frozenset[int]]] = {}
+        self._live_groups_map: dict[int, Optional[frozenset[int]]] = {}
+        self._live_chat_ids: Optional[set[int]] = None
 
     async def _rag_group_reply(self, message: Message, text: str, **kwargs: Any) -> None:
-        """Реплай в RAG-группу; при RAG_GROUP_INDEX_REPLIES=off — только лог (тихий режим)."""
-        if not self.config.RAG_GROUP_INDEX_REPLIES:
+        """Реплай в RAG-группу; живой чат и RAG_GROUP_INDEX_REPLIES=off — только лог."""
+        if getattr(self, "_index_silent", False) or not self.config.RAG_GROUP_INDEX_REPLIES:
             logger.info(
                 "[%s] тихий режим: ответ в группу не отправляем: %s",
                 self.name,
@@ -205,16 +210,97 @@ class GroupRagIndexerFeature(BaseFeature):
         """``TelegramBotApp`` — даёт ``bot``, ``media_processor``, ``rag_stack``."""
         self._app = app
 
+    async def _uid_is_expert(self, uid: int) -> bool:
+        if not uid:
+            return False
+        sid = int(self.config.SUPER_ADMIN_ID or 0)
+        if sid and uid == sid:
+            return True
+        if not self._app:
+            return False
+        return await self._app.user_storage.is_bot_admin(uid)
+
+    async def _expert_ids(self) -> set[int]:
+        ids: set[int] = set()
+        sid = int(self.config.SUPER_ADMIN_ID or 0)
+        if sid:
+            ids.add(sid)
+        if self._app:
+            try:
+                ids.update(await self._app.user_storage.list_bot_admin_ids())
+            except Exception:
+                logger.exception("[%s] list_bot_admin_ids", self.name)
+        return ids
+
+    async def _notify_live_chat(self, *, chat_id: int, title: str) -> None:
+        sid = int(self.config.SUPER_ADMIN_ID or 0)
+        if not sid or not self._app:
+            return
+        name = html_escape((title or "").strip() or str(chat_id))
+        topics = self._live_groups_map.get(chat_id)
+        if topics:
+            topic_s = ", ".join(str(t) for t in sorted(topics))
+            scope = f"только топик {topic_s}"
+        else:
+            scope = "все топики"
+        text = (
+            f"Читаю чат «{name}» ({scope}).\n"
+            "Сообщения эксперта (вы и админы бота) и других участников пишу в RAG "
+            "с пометкой кто сказал.\n"
+            "Историю до добавления бота Telegram не отдаёт.\n"
+            "В @BotFather: Bot Settings → Group Privacy → Turn off — "
+            "иначе бот видит только команды."
+        )
+        try:
+            await self._app.bot.send_message(sid, text, parse_mode=ParseMode.HTML)
+        except Exception:
+            logger.exception("[%s] не удалось написать админу про чат %s", self.name, chat_id)
+
+    async def _on_my_chat_member(self, event: ChatMemberUpdated) -> None:
+        if not event.chat or event.chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
+            return
+        me = event.new_chat_member
+        if not me or not me.user or not self._app:
+            return
+        try:
+            bot_id = (await self._app.bot.get_me()).id
+        except Exception:
+            return
+        if me.user.id != bot_id:
+            return
+        status = str(getattr(me.status, "value", me.status) or "").lower()
+        title = (event.chat.title or "").strip()
+        chat_id = int(event.chat.id)
+        if status in ("left", "kicked"):
+            try:
+                await self._app.user_storage.disable_rag_index_chat(chat_id)
+            except Exception:
+                logger.exception("[%s] disable rag_index_chats %s", self.name, chat_id)
+            logger.info("[%s] бот вышел из чата %s", self.name, chat_id)
+            return
+        if status not in ("member", "administrator", "restricted"):
+            return
+        if chat_id in self._live_groups_map:
+            logger.info("[%s] бот в живом чате %s (%s)", self.name, chat_id, title)
+            await self._notify_live_chat(chat_id=chat_id, title=title)
+            return
+        logger.info(
+            "[%s] бота добавили в %s (%s) — чата нет в RAG_LIVE_CHATS, не читаю",
+            self.name,
+            chat_id,
+            title,
+        )
+
+    def set_bot(self, app: Any) -> None:
+        """``TelegramBotApp`` — даёт ``bot``, ``media_processor``, ``rag_stack``."""
+        self._app = app
+
     def register_handlers(self, dispatcher: Dispatcher) -> None:
         self._groups_map = dict(self.config.rag_groups_map)
         self._testimonial_groups_map = dict(self.config.rag_testimonial_groups_map)
+        self._live_groups_map = dict(self.config.rag_live_chats_map)
         index_map = dict(self.config.rag_index_groups_map)
-        if not index_map:
-            self.log("RAG-группы не заданы (ни RAG_GROUPS, ни RAG_GROUP_CHAT_ID) — хендлер не регистрируется")
-            return
-
-        gids = list(index_map.keys())
-        chat_filter = F.chat.id.in_(gids)
+        chat_filter = F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP})
 
         dispatcher.message.register(
             self._on_forum_topic_created,
@@ -236,10 +322,12 @@ class GroupRagIndexerFeature(BaseFeature):
             chat_filter,
             F.func(lambda m: not _message_looks_like_bot_command(m)),
         )
-        dispatcher.channel_post.register(
-            self._on_channel_post,
-            chat_filter,
-        )
+        if index_map:
+            dispatcher.channel_post.register(
+                self._on_channel_post,
+                F.chat.id.in_(list(index_map.keys())),
+            )
+        dispatcher.my_chat_member.register(self._on_my_chat_member)
         for gid, topics in index_map.items():
             t_desc = f"топики: {sorted(topics)}" if topics else "все топики"
             expert = "да" if gid in self._groups_map else "нет"
@@ -247,6 +335,12 @@ class GroupRagIndexerFeature(BaseFeature):
             self.log(
                 f"Индексация RAG для chat_id={gid} ({t_desc}); expert={expert} testimonial={testim}"
             )
+        self.log("Живые чаты: читаю только список RAG_LIVE_CHATS")
+        for gid, topics in self._live_groups_map.items():
+            t_desc = f"топик(и) {sorted(topics)}" if topics else "все топики"
+            self.log(f"Живой чат RAG chat_id={gid} ({t_desc})")
+        if not self._live_groups_map:
+            self.log("RAG_LIVE_CHATS пуст — живые чаты не читаю")
         if self.config.rag_indexer_verbose:
             self.log(
                 "rag_indexer_verbose: подробные логи индекса/топика/парсера (RAG_INDEXER_DEBUG=1 или LOG_LEVEL=DEBUG)",
@@ -540,6 +634,7 @@ class GroupRagIndexerFeature(BaseFeature):
         if rs is None:
             logger.debug("[%s] rag_stack выключен — пропуск", self.name)
             return
+        self._index_silent = False
 
         tid = message.message_thread_id
         if tid is not None and int(tid) in self.config.rag_exclude_topic_ids:
@@ -554,15 +649,19 @@ class GroupRagIndexerFeature(BaseFeature):
             message, self._testimonial_groups_map
         )
         in_expert = message_in_rag_groups_scope(message, self._groups_map)
+        live = False
         if not in_testimonial and not in_expert:
-            logger.debug(
-                "[%s] вне scope RAG (expert/testimonial), chat_id=%s thread_id=%s",
-                self.name,
-                message.chat.id,
-                message.message_thread_id,
-            )
-            return
+            live = message_in_rag_groups_scope(message, self._live_groups_map)
+            if not live:
+                logger.debug(
+                    "[%s] вне scope RAG (expert/testimonial/live), chat_id=%s thread_id=%s",
+                    self.name,
+                    message.chat.id,
+                    message.message_thread_id,
+                )
+                return
         is_testimonial_chunk = in_testimonial
+        self._index_silent = live
 
         if self.config.rag_indexer_verbose:
             ch = message.chat
@@ -653,7 +752,10 @@ class GroupRagIndexerFeature(BaseFeature):
             )
             return
 
-        min_len = int(self.config.RAG_MIN_INDEX_CHARS or 300)
+        min_len = int(
+            (self.config.RAG_CHAT_MIN_INDEX_CHARS if live else self.config.RAG_MIN_INDEX_CHARS)
+            or (40 if live else 300)
+        )
         if not raw_text.strip():
             if has_file_media:
                 logger.warning("[%s] после обработки медиа нет текста", self.name)
@@ -688,8 +790,31 @@ class GroupRagIndexerFeature(BaseFeature):
         from course.products import active_product_id, match_product_alias
 
         product_id = match_product_alias(product_value) or active_product_id()
-        source_kind = "testimonial" if is_testimonial_chunk else "expert_reply"
-        tags = await extract_content_tags(raw_text)
+        expert_ids = await self._expert_ids()
+        if uid:
+            speaker_role = infer_speaker_role(user_id=uid, expert_ids=expert_ids)
+        elif live:
+            speaker_role = "client"
+        else:
+            speaker_role = "expert"
+        if live:
+            content_category = "dialog"
+            content_type = content_type if content_type and content_type != "unknown" else "dialog"
+            source_kind = "dialog"
+        else:
+            source_kind = "testimonial" if is_testimonial_chunk else "expert_reply"
+            if not is_testimonial_chunk and speaker_role != "expert":
+                source_kind = "dialog"
+        prefix = speaker_text_prefix(
+            role=speaker_role,
+            user=message.from_user,
+            expert_name=str(self.config.EXPERT_NAME or ""),
+        )
+        if live or speaker_role != "expert":
+            raw_text = f"{prefix}\n{raw_text}"
+        tags = ""
+        if not live:
+            tags = await extract_content_tags(raw_text)
         source_label = build_source_identifier(message, raw_text, has_file_media)
         date_iso = message_date_iso_utc(message)
         group_link = telegram_internal_message_link(message)
@@ -727,6 +852,9 @@ class GroupRagIndexerFeature(BaseFeature):
             "added_by": uid,
             "date": date_iso,
             "topic_title": topic_title[:500],
+            "role": speaker_role,
+            "voice_source": "expert" if speaker_role == "expert" else "client",
+            "speaker": prefix[:500],
         }
         visibility = await resolve_source_visibility(
             self._app,
@@ -741,9 +869,9 @@ class GroupRagIndexerFeature(BaseFeature):
         if is_testimonial_chunk:
             meta.update(testimonial_metadata_overrides())
         else:
-            role = infer_dialog_role(raw_text, content_category)
-            if role:
-                meta["role"] = role
+            marked = infer_dialog_role(raw_text, content_category)
+            if marked and speaker_role != "expert":
+                meta["role"] = marked
 
         dedupe_salt = f"{message.chat.id}:{message.message_id}"
 
