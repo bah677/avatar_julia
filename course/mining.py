@@ -28,22 +28,46 @@ def _norm_text(s: str) -> str:
     return re.sub(r"\s+", " ", t).strip()
 
 
+def _cut_oversize(text: str, max_chars: int) -> List[str]:
+    body = (text or "").strip()
+    if not body:
+        return []
+    if len(body) <= max_chars:
+        return [body]
+    out: List[str] = []
+    rest = body
+    while rest:
+        if len(rest) <= max_chars:
+            out.append(rest)
+            break
+        cut = rest.rfind("\n", 0, max_chars)
+        if cut < max_chars // 3:
+            cut = max_chars
+        piece = rest[:cut].strip()
+        if piece:
+            out.append(piece)
+        rest = rest[cut:].lstrip()
+    return out
+
+
 def _split_blocks(blocks_text: str, *, max_chars: int = _CHUNK_CHARS) -> List[str]:
     parts = [p.strip() for p in (blocks_text or "").split("\n\n") if p.strip()]
     if not parts:
-        return [blocks_text[:max_chars]] if blocks_text else []
+        return _cut_oversize(blocks_text, max_chars)
     chunks: List[str] = []
     buf: List[str] = []
     n = 0
     for p in parts:
-        add = len(p) + 2
-        if buf and n + add > max_chars:
-            chunks.append("\n\n".join(buf))
-            buf = [p]
-            n = len(p)
-        else:
-            buf.append(p)
-            n += add
+        pieces = _cut_oversize(p, max_chars) or [p]
+        for piece in pieces:
+            add = len(piece) + 2
+            if buf and n + add > max_chars:
+                chunks.append("\n\n".join(buf))
+                buf = [piece]
+                n = len(piece)
+            else:
+                buf.append(piece)
+                n += add
     if buf:
         chunks.append("\n\n".join(buf))
     return chunks
@@ -64,15 +88,34 @@ def _cards_similar(a: dict, b: dict) -> bool:
     return False
 
 
-def _merge_cards(pool: Sequence[dict], *, top_n: int) -> List[dict]:
+def _merge_cards(
+    pool: Sequence[dict],
+    *,
+    top_n: int,
+    min_participant: int = 0,
+) -> List[dict]:
     ranked = sorted(pool, key=lambda x: float(x.get("score") or 0), reverse=True)
-    out: List[dict] = []
-    for card in ranked:
-        if any(_cards_similar(card, x) for x in out):
-            continue
-        out.append(card)
-        if len(out) >= top_n:
-            break
+
+    def _take(src: Sequence[dict], n: int, acc: List[dict]) -> List[dict]:
+        picked: List[dict] = []
+        for card in src:
+            if len(picked) >= n:
+                break
+            if any(_cards_similar(card, x) for x in acc + picked):
+                continue
+            picked.append(card)
+        return picked
+
+    if min_participant <= 0:
+        return _take(ranked, top_n, [])
+    part = [c for c in ranked if c.get("speaker") == "participant"]
+    rest = [c for c in ranked if c.get("speaker") != "participant"]
+    want_p = min(len(part), max(0, min_participant), top_n)
+    out = _take(part, want_p, [])
+    out.extend(_take(rest, top_n - len(out), out))
+    if len(out) < top_n:
+        leftover = [c for c in ranked if c not in out]
+        out.extend(_take(leftover, top_n - len(out), out))
     return out
 
 
@@ -180,19 +223,62 @@ async def mine_source(
     for p in parts:
         pool.extend(p)
     per_hour = int(getattr(config, "COURSE_CARDS_PER_HOUR", 30) or 30)
+    min_participant = 0
     if is_document:
         top_n = 15
     else:
         hours = max(0.3, (duration_sec or 1800) / 3600.0)
         top_n = max(8, min(80, int(per_hour * hours)))
-    return _merge_cards(pool, top_n=top_n)
+        if kind == "practice":
+            top_n = max(24, min(80, top_n))
+            min_participant = max(8, top_n // 3)
+    return _merge_cards(pool, top_n=top_n, min_participant=min_participant)
 
 
-def mining_chunks_from_segments(segments: Sequence[SpeechSegment]) -> List[str]:
-    blocks = format_expert_blocks_for_prompt(
-        segments, gap_sec=12.0, limit_blocks=400, max_text_per_block=700
-    )
-    return _split_blocks(blocks) or ([blocks] if blocks else [])
+def duration_from_segments(segments: Sequence[SpeechSegment]) -> Optional[int]:
+    if not segments:
+        return None
+    end = max(float(s.end_sec) for s in segments)
+    if end <= 0:
+        return None
+    return int(end)
+
+
+def mining_chunks_from_segments(
+    segments: Sequence[SpeechSegment],
+    *,
+    max_chars: int = _CHUNK_CHARS,
+    window_sec: float = 600.0,
+) -> List[str]:
+    """Полная расшифровка окнами ~10 мин / 20k знаков — без обрезки реплик."""
+    if not segments:
+        return []
+    chunks: List[str] = []
+    buf: List[str] = []
+    n = 0
+    win_start: Optional[float] = None
+    for s in segments:
+        text = (s.text or "").strip()
+        if not text:
+            continue
+        sp = (s.speaker or "").strip()
+        line = f"[{s.start_sec:.0f}s] {sp + ': ' if sp else ''}{text}"
+        add = len(line) + 1
+        overflow = buf and n + add > max_chars
+        too_long = buf and win_start is not None and (s.start_sec - win_start) > window_sec
+        if overflow or too_long:
+            chunks.append("\n".join(buf))
+            buf = [line]
+            n = len(line)
+            win_start = s.start_sec
+        else:
+            if win_start is None:
+                win_start = s.start_sec
+            buf.append(line)
+            n += add
+    if buf:
+        chunks.append("\n".join(buf))
+    return chunks
 
 
 def mining_chunks_from_pages(pages: Sequence[dict]) -> List[str]:
@@ -223,7 +309,7 @@ def window_for_card(
                 break
     win = merge_segments_window(list(segments), start, end)
     text = format_expert_blocks_for_prompt(
-        win, gap_sec=8.0, limit_blocks=40, max_text_per_block=700
+        win, gap_sec=8.0, limit_blocks=80, max_text_per_block=8000
     )
     return text.strip() or (card.get("quote") or card.get("text") or "")
 

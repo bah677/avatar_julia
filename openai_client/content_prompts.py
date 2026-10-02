@@ -59,7 +59,12 @@ WRITER_ROLE = """Ты — продюсер контента эксперта. П
 
 def mining_system(expert_name: str, kind: str) -> str:
     extra = {
-        "practice": "Это Zoom-практика: различай эксперта и участников по смыслу.",
+        "practice": (
+            "Это Zoom-практика. Реплики участников не менее ценны, чем речь эксперта. "
+            "В каждом куске бери и эксперта, и участников: вопросы, боли, инсайты, кейсы, "
+            "живые формулировки — отдельные карточки speaker=participant с дословной quote. "
+            "Тезисы и ответы эксперта — speaker=expert. Не своди кусок только к выводам ведущей."
+        ),
         "broadcast": "Это эфир. Бери сильные формулировки эксперта.",
         "lesson_video": "Это запись урока.",
         "summary": "Это конспект урока (текст/страницы).",
@@ -94,11 +99,14 @@ def writer_task_block(
     task: str,
     previous: str = "",
     instruction: str = "",
+    retrieved: str = "",
 ) -> str:
     parts = []
     if golden:
         parts.append(f"## Образцы\n{golden}")
     parts.append(f"## Материал\n{material or '—'}")
+    if retrieved:
+        parts.append(f"## Из базы (по правке)\n{retrieved}")
     if previous:
         parts.append(f"## Прошлая версия\n{previous}")
     if instruction:

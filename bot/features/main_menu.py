@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from html import escape as html_escape
-from typing import Any
+from typing import Any, Optional
 
 from aiogram import Dispatcher, F
 from aiogram.enums import ParseMode
@@ -76,6 +76,25 @@ def _btn(text: str, action: str) -> InlineKeyboardButton:
     return InlineKeyboardButton(text=text, callback_data=f"{MENU_CB}{action}")
 
 
+def studio_url() -> str:
+    """Адрес веб-студии для мини-аппа; пусто — кнопку не показываем."""
+    from config import config
+
+    if not getattr(config, "WEB_ENABLED", False):
+        return ""
+    domain = str(getattr(config, "WEB_DOMAIN", "") or "").strip()
+    return f"https://{domain}/" if domain else ""
+
+
+def studio_button() -> Optional[InlineKeyboardButton]:
+    from aiogram.types import WebAppInfo
+
+    url = studio_url()
+    if not url:
+        return None
+    return InlineKeyboardButton(text="🎛 Студия контента", web_app=WebAppInfo(url=url))
+
+
 def menu_keyboard(*, superadmin: bool) -> InlineKeyboardMarkup:
     rows = [
         [_btn("📅 План недели", "plan"), _btn("🎯 Фокус", "focus")],
@@ -89,6 +108,9 @@ def menu_keyboard(*, superadmin: bool) -> InlineKeyboardMarkup:
     ]
     if superadmin:
         rows.append([_btn("💸 Расходы", "costs"), _btn("🧹 Сводка RAG", "summary")])
+    studio = studio_button()
+    if studio is not None:
+        rows.insert(0, [studio])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

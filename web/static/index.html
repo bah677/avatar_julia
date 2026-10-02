@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <title>Контент-студия</title>
+  <meta name="theme-color" content="#f7f7f9" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0c0c10" media="(prefers-color-scheme: dark)">
+  <script>
+    /* Тема до первой отрисовки — чтобы не мигало светлым. */
+    (function () {
+      try {
+        var t = localStorage.getItem("studio.theme");
+        if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+      } catch (e) {}
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/static/style.css?v=9">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+
+<div id="login" class="login" hidden>
+  <div class="login-card">
+    <div class="login-head">
+      <span class="logo" aria-hidden="true"></span>
+      <div>
+        <h1>Контент-студия</h1>
+        <p class="muted">Вход для команды</p>
+      </div>
+    </div>
+
+    <section id="step-admin">
+      <p class="lead">Кто вы? Бот пришлёт код в Telegram.</p>
+      <div id="admin-list" class="admin-list"></div>
+      <button type="button" class="link" id="btn-token-login" hidden>Войти по общему коду</button>
+    </section>
+
+    <form id="step-code" hidden>
+      <p class="lead" id="code-hint">Код отправлен в Telegram. Действует 10 минут.</p>
+      <input id="login-code" class="field otp" inputmode="numeric" autocomplete="one-time-code"
+             maxlength="6" placeholder="••••••" aria-label="Код из Telegram">
+      <button type="submit" class="btn primary wide">Войти</button>
+      <button type="button" class="link" id="btn-back">← Выбрать другого</button>
+    </form>
+
+    <form id="step-token" hidden>
+      <p class="lead">Аварийный вход по общему коду.</p>
+      <input type="password" id="login-token" class="field" autocomplete="current-password" placeholder="Код доступа">
+      <button type="submit" class="btn primary wide">Войти</button>
+      <button type="button" class="link" id="btn-back2">← Назад</button>
+    </form>
+
+    <p class="err" id="login-err" role="alert" hidden></p>
+  </div>
+</div>
+
+<div id="app" class="app" hidden>
+  <header class="top">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"></span>
+      <div class="brand-text">
+        <strong id="product-name">—</strong>
+        <button type="button" class="chat-title" id="chat-title" title="Переименовать чат">новый чат</button>
+        <input type="text" class="chat-title-input" id="chat-title-input" maxlength="200" hidden aria-label="Название чата">
+      </div>
+    </div>
+    <div class="top-actions">
+      <button id="btn-new-top" class="icon-btn mobile-only" title="Новый чат" aria-label="Новый чат" data-icon="plus"></button>
+      <button id="btn-sync" class="icon-btn" title="Синхронизировать с Яндекс.Диском" aria-label="Синхронизировать" data-icon="sync"></button>
+      <button id="btn-theme" class="icon-btn" title="Тема" aria-label="Переключить тему" data-icon="auto"></button>
+      <span class="divider" aria-hidden="true"></span>
+      <span class="me" id="me" hidden></span>
+      <button id="btn-logout" class="icon-btn" title="Выйти из студии" aria-label="Выйти" data-icon="logout"></button>
+    </div>
+  </header>
+
+  <aside class="pane pane-left" id="pane-left">
+    <button id="btn-new" class="btn primary wide new-chat"><span data-icon="plus"></span>Новый чат</button>
+
+    <section class="block">
+      <div class="block-head">
+        <h2>Чаты</h2>
+      </div>
+      <div id="chat-list" class="chat-list"></div>
+    </section>
+
+    <section class="block grow">
+      <div class="block-head">
+        <h2>Материалы</h2>
+        <button id="btn-clear-ctx" class="link small" hidden>Сбросить выбор</button>
+      </div>
+      <label class="search-wrap">
+        <span data-icon="search"></span>
+        <input id="tree-search" class="search" type="search" placeholder="Поиск по материалам" aria-label="Поиск по материалам">
+        <kbd class="desktop-only">Ctrl K</kbd>
+      </label>
+      <div id="tree" class="tree"></div>
+    </section>
+  </aside>
+
+  <main class="pane pane-chat" id="pane-chat">
+    <div id="messages" class="messages" aria-live="polite"></div>
+    <div class="composer-wrap">
+      <div id="progress" class="progress" hidden>
+        <span class="typing" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span id="progress-text">Думаю…</span>
+        <span class="muted" id="progress-time"></span>
+      </div>
+      <form class="composer" id="composer">
+        <div id="ctx-chips" class="chips"></div>
+        <textarea id="input" rows="1" placeholder="Опишите задачу — например, «сделай серию сторис на основе практики 2.4»" aria-label="Сообщение"></textarea>
+        <div class="composer-row">
+          <div class="ctx-meta">
+            <button type="button" class="ctx-pill" id="ctx-format" title="Вид контента"></button>
+            <button type="button" class="ctx-pill" id="ctx-stage" title="Этап прогрева"></button>
+            <span class="muted small" id="ctx-hint"></span>
+          </div>
+          <button type="submit" class="send-btn" id="btn-send" title="Отправить (Enter)" aria-label="Отправить" data-icon="send"></button>
+        </div>
+      </form>
+      <p class="composer-tip desktop-only"><kbd>Enter</kbd> отправить · <kbd>Shift</kbd>+<kbd>Enter</kbd> новая строка</p>
+    </div>
+  </main>
+
+  <aside class="pane pane-right" id="pane-right">
+    <section class="block">
+      <div class="block-head"><h2>Вид контента</h2></div>
+      <div id="formats" class="seg"></div>
+    </section>
+    <section class="block">
+      <div class="block-head"><h2>Этап прогрева</h2></div>
+      <div id="stages" class="options"></div>
+    </section>
+    <section class="block">
+      <div class="block-head">
+        <h2>Фокус</h2>
+        <span class="saved small" id="focus-saved" hidden>Сохранено</span>
+      </div>
+      <textarea id="focus" class="field" rows="4" placeholder="На чём сейчас фокус: запуск, тема, задача"></textarea>
+      <label class="switch">
+        <input type="checkbox" id="focus-default">
+        <span class="track" aria-hidden="true"></span>
+        <span>Фокус по умолчанию для новых чатов</span>
+      </label>
+    </section>
+    <section class="block">
+      <div class="block-head"><h2>Очередь обработки</h2></div>
+      <div id="queue" class="queue muted">—</div>
+    </section>
+  </aside>
+
+  <nav class="tabs" aria-label="Разделы">
+    <button data-pane="pane-left"><span data-icon="layers"></span><span>Материалы</span><b class="tab-badge" id="tab-badge" hidden></b></button>
+    <button data-pane="pane-chat" class="active"><span data-icon="chat"></span><span>Чат</span></button>
+    <button data-pane="pane-right"><span data-icon="sliders"></span><span>Настройки</span></button>
+  </nav>
+</div>
+
+<div id="toasts" class="toasts" aria-live="assertive"></div>
+
+<script src="/static/app.js?v=9"></script>
+</body>
+</html>

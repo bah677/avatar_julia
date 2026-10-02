@@ -93,6 +93,21 @@ class RagScopeTests(unittest.TestCase):
         self.assertIn("legacy", blob)
         self.assertIn("$ne", blob)
 
+    def test_search_chunks_source_ids_and_category(self) -> None:
+        store = FakeStore()
+        gateway = RagScope(store, ProductScope(product_id="mbt"))
+        gateway.search_chunks(
+            "цитаты",
+            k=4,
+            source_ids=["src-1"],
+            content_category="testimonial",
+        )
+        where = store.expert_collection.calls[0]["where"]
+        blob = str(where)
+        self.assertIn("src-1", blob)
+        self.assertIn("testimonial", blob)
+        self.assertIsNotNone(_product_ids_in(where))
+
     def test_empty_query_does_not_hit_chroma(self) -> None:
         store = FakeStore()
         gateway = RagScope(store, ProductScope(product_id="mbt"))

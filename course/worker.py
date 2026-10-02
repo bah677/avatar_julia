@@ -14,6 +14,7 @@ from course.documents import extract_document, split_posts
 from course.llm import CourseLLM
 from course.mining import (
     build_lesson_passport,
+    duration_from_segments,
     find_duplicate_card,
     mine_source,
     mining_chunks_from_pages,
@@ -140,6 +141,7 @@ class CourseWorker:
         meta = _as_dict(src.get("metadata"))
         chars = 0
         method = ""
+        duration_sec = src.get("duration_sec")
 
         media_path = str(src.get("disk_path") or src.get("url") or "")
         ext = Path(media_path).suffix.lower()
@@ -169,6 +171,8 @@ class CourseWorker:
             })
             chars = sum(len(s.text) for s in segs)
             meta["text_method"] = method
+            if not duration_sec:
+                duration_sec = duration_from_segments(segs)
             if chars <= 0:
                 hint = ""
                 if origin == "vimeo":
@@ -233,15 +237,17 @@ class CourseWorker:
             "kind": kind,
             "url": src.get("url"),
             "disk_path": src.get("disk_path"),
-            "duration_sec": src.get("duration_sec"),
+            "duration_sec": duration_sec,
         })
-        await self.storage.update_course_source(
-            src["id"],
+        fields = dict(
             status="extracted",
             text_method=method,
             chars_count=chars,
             metadata=meta,
         )
+        if duration_sec:
+            fields["duration_sec"] = duration_sec
+        await self.storage.update_course_source(src["id"], **fields)
 
     async def _stage_index(self, src: Dict[str, Any]) -> None:
         rs = getattr(self._app, "rag_stack", None)
@@ -270,6 +276,7 @@ class CourseWorker:
         raw_log = dest / "mining.raw.jsonl"
         chunks: list[str] = []
         is_doc = False
+        segs: list = []
         if tr_path.is_file():
             data = json.loads(tr_path.read_text(encoding="utf-8"))
             segs = segments_from_dicts(data.get("segments") or [])
@@ -288,13 +295,14 @@ class CourseWorker:
         if desc:
             chunks = [desc, *chunks]
         if chunks:
+            dur = src.get("duration_sec") or duration_from_segments(segs)
             cards = await mine_source(
                 kind=kind,
                 title=src.get("title") or "",
                 chunks=chunks,
                 llm=llm,
                 user_id=user_id,
-                duration_sec=src.get("duration_sec"),
+                duration_sec=dur,
                 is_document=is_doc,
             )
             with raw_log.open("w", encoding="utf-8") as f:
@@ -312,6 +320,14 @@ class CourseWorker:
                 gateway = scope_from_stack(rs)
             except Exception:
                 gateway = None
+            try:
+                rs.materials.delete_cards_by_source(str(src["id"]))
+            except Exception as e:
+                logger.warning("chroma delete cards %s: %s", src["id"], e)
+        if not src.get("duration_sec") and segs:
+            dur = duration_from_segments(segs)
+            if dur:
+                await self.storage.update_course_source(src["id"], duration_sec=dur)
         n_new = 0
         for card in cards:
             if gateway is not None:
@@ -363,6 +379,7 @@ class CourseWorker:
                         "card_id": str(cid),
                         "type": card.get("type") or "idea",
                         "funnel_stage": card.get("funnel_stage") or "warmup",
+                        "speaker": card.get("speaker") or "expert",
                         "status": "active",
                     },
                 )

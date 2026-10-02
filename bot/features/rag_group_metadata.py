@@ -42,6 +42,29 @@ def _rag_indexer_debug_env() -> bool:
     return (os.getenv("LOG_LEVEL") or "").strip().upper() == "DEBUG"
 
 
+def is_silent_read_chat(
+    message: Message,
+    *,
+    live_map: Optional[Dict[int, Optional[FrozenSet[int]]]] = None,
+    participant_map: Optional[Dict[int, Optional[FrozenSet[int]]]] = None,
+) -> bool:
+    """Живой чат (весь chat_id) и топики-архивы участников: бот не отвечает в чат."""
+    if live_map is None or participant_map is None:
+        from config import config
+
+        if live_map is None:
+            live_map = config.rag_live_chats_map
+        if participant_map is None:
+            participant_map = config.rag_participant_chats_map
+    try:
+        cid = int(message.chat.id)
+    except Exception:
+        return False
+    if cid in (live_map or {}):
+        return True
+    return message_in_rag_groups_scope(message, participant_map or {})
+
+
 def message_in_rag_groups_scope(
     message: Message,
     groups_map: Dict[int, Optional[FrozenSet[int]]],
@@ -283,6 +306,33 @@ def speaker_text_prefix(*, role: str, user: Any = None, expert_name: str = "") -
         return f"[эксперт {who}]"
     who = speaker_display_name(user) or "участник"
     return f"[участник {who}]"
+
+
+def forwarded_speaker_name(message: Any) -> str:
+    """Имя автора пересланного сообщения, если Telegram его отдал."""
+    origin = getattr(message, "forward_origin", None)
+    if origin is not None:
+        user = getattr(origin, "sender_user", None)
+        if user is not None:
+            return speaker_display_name(user)
+        hidden = (getattr(origin, "sender_user_name", None) or "").strip()
+        if hidden:
+            return hidden
+        chat = getattr(origin, "sender_chat", None)
+        if chat is not None:
+            return (getattr(chat, "title", None) or "").strip()
+    fu = getattr(message, "forward_from", None)
+    if fu is not None:
+        return speaker_display_name(fu)
+    return ""
+
+
+def participant_dump_prefix(message: Any) -> str:
+    """Архив участников: всегда client, имя — из пересылки, иначе просто «участник»."""
+    name = forwarded_speaker_name(message)
+    if name:
+        return f"[участник {name}]"
+    return "[участник]"
 
 
 def infer_dialog_role(raw_text: str, content_category: str) -> Optional[str]:

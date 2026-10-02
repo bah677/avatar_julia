@@ -28,6 +28,8 @@ from storage.db.course import CourseMixin
 from storage.db.content_cards import ContentCardsMixin
 from storage.db.content_items import ContentItemsMixin
 from storage.db.style import StyleMixin
+from storage.db.web_chats import WebChatsMixin
+from storage.db.web_sessions import WebSessionsMixin
 
 
 class Database(
@@ -53,6 +55,8 @@ class Database(
     ContentCardsMixin,
     ContentItemsMixin,
     StyleMixin,
+    WebChatsMixin,
+    WebSessionsMixin,
     DatabaseBase,
 ):
     """Единая точка доступа к PostgreSQL.

@@ -32,8 +32,10 @@ from bot.features.rag_group_metadata import (
     build_source_identifier,
     infer_dialog_role,
     infer_speaker_role,
+    is_silent_read_chat,
     message_date_iso_utc,
     message_in_rag_groups_scope,
+    participant_dump_prefix,
     resolve_content_type_product_category,
     speaker_text_prefix,
     telegram_internal_message_link,
@@ -133,6 +135,12 @@ _RAG_GROUP_REPLY_MAX_RETRIES = 12
 
 async def _rag_throttled_reply(message: Message, text: str, **kwargs: Any) -> None:
     """Пауза между SendMessage из индексатора и повтор после flood limit."""
+    if is_silent_read_chat(message):
+        logger.info(
+            "group_rag_indexer: живой/архивный чат — ответ не отправляем: %s",
+            (text or "")[:300],
+        )
+        return
     global _RAG_LAST_REPLY_MONO
     loop = asyncio.get_running_loop()
     async with _RAG_REPLY_LOCK:
@@ -193,11 +201,12 @@ class GroupRagIndexerFeature(BaseFeature):
         self._groups_map: dict[int, Optional[frozenset[int]]] = {}
         self._testimonial_groups_map: dict[int, Optional[frozenset[int]]] = {}
         self._live_groups_map: dict[int, Optional[frozenset[int]]] = {}
+        self._participant_chats_map: dict[int, Optional[frozenset[int]]] = {}
         self._live_chat_ids: Optional[set[int]] = None
 
     async def _rag_group_reply(self, message: Message, text: str, **kwargs: Any) -> None:
-        """Реплай в RAG-группу; живой чат и RAG_GROUP_INDEX_REPLIES=off — только лог."""
-        if getattr(self, "_index_silent", False) or not self.config.RAG_GROUP_INDEX_REPLIES:
+        """Реплай в RAG-группу; живой чат и архив участников — никогда."""
+        if is_silent_read_chat(message) or getattr(self, "_index_silent", False) or not self.config.RAG_GROUP_INDEX_REPLIES:
             logger.info(
                 "[%s] тихий режим: ответ в группу не отправляем: %s",
                 self.name,
@@ -299,6 +308,7 @@ class GroupRagIndexerFeature(BaseFeature):
         self._groups_map = dict(self.config.rag_groups_map)
         self._testimonial_groups_map = dict(self.config.rag_testimonial_groups_map)
         self._live_groups_map = dict(self.config.rag_live_chats_map)
+        self._participant_chats_map = dict(self.config.rag_participant_chats_map)
         index_map = dict(self.config.rag_index_groups_map)
         chat_filter = F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP})
 
@@ -341,6 +351,13 @@ class GroupRagIndexerFeature(BaseFeature):
             self.log(f"Живой чат RAG chat_id={gid} ({t_desc})")
         if not self._live_groups_map:
             self.log("RAG_LIVE_CHATS пуст — живые чаты не читаю")
+        for gid, topics in self._participant_chats_map.items():
+            t_desc = f"топик(и) {sorted(topics)}" if topics else "все топики"
+            self.log(
+                f"Архив участников RAG chat_id={gid} ({t_desc}); все реплики как client"
+            )
+        if not self._participant_chats_map:
+            self.log("RAG_PARTICIPANT_CHATS пуст — архив участников не читаю")
         if self.config.rag_indexer_verbose:
             self.log(
                 "rag_indexer_verbose: подробные логи индекса/топика/парсера (RAG_INDEXER_DEBUG=1 или LOG_LEVEL=DEBUG)",
@@ -648,20 +665,26 @@ class GroupRagIndexerFeature(BaseFeature):
         in_testimonial = message_in_rag_groups_scope(
             message, self._testimonial_groups_map
         )
-        in_expert = message_in_rag_groups_scope(message, self._groups_map)
-        live = False
-        if not in_testimonial and not in_expert:
-            live = message_in_rag_groups_scope(message, self._live_groups_map)
-            if not live:
-                logger.debug(
-                    "[%s] вне scope RAG (expert/testimonial/live), chat_id=%s thread_id=%s",
-                    self.name,
-                    message.chat.id,
-                    message.message_thread_id,
-                )
-                return
+        in_participant = message_in_rag_groups_scope(
+            message, self._participant_chats_map
+        )
+        in_live = message_in_rag_groups_scope(message, self._live_groups_map)
+        in_expert = False if (in_participant or in_live) else message_in_rag_groups_scope(
+            message, self._groups_map
+        )
+        live = in_live
+        participant_dump = in_participant
+        dialog_mode = live or participant_dump
+        if not in_testimonial and not in_expert and not dialog_mode:
+            logger.debug(
+                "[%s] вне scope RAG (expert/testimonial/live/dump), chat_id=%s thread_id=%s",
+                self.name,
+                message.chat.id,
+                message.message_thread_id,
+            )
+            return
         is_testimonial_chunk = in_testimonial
-        self._index_silent = live
+        self._index_silent = dialog_mode
 
         if self.config.rag_indexer_verbose:
             ch = message.chat
@@ -753,8 +776,12 @@ class GroupRagIndexerFeature(BaseFeature):
             return
 
         min_len = int(
-            (self.config.RAG_CHAT_MIN_INDEX_CHARS if live else self.config.RAG_MIN_INDEX_CHARS)
-            or (40 if live else 300)
+            (
+                self.config.RAG_CHAT_MIN_INDEX_CHARS
+                if dialog_mode
+                else self.config.RAG_MIN_INDEX_CHARS
+            )
+            or (40 if dialog_mode else 300)
         )
         if not raw_text.strip():
             if has_file_media:
@@ -791,13 +818,15 @@ class GroupRagIndexerFeature(BaseFeature):
 
         product_id = match_product_alias(product_value) or active_product_id()
         expert_ids = await self._expert_ids()
-        if uid:
+        if participant_dump:
+            speaker_role = "client"
+        elif uid:
             speaker_role = infer_speaker_role(user_id=uid, expert_ids=expert_ids)
         elif live:
             speaker_role = "client"
         else:
             speaker_role = "expert"
-        if live:
+        if dialog_mode:
             content_category = "dialog"
             content_type = content_type if content_type and content_type != "unknown" else "dialog"
             source_kind = "dialog"
@@ -805,15 +834,18 @@ class GroupRagIndexerFeature(BaseFeature):
             source_kind = "testimonial" if is_testimonial_chunk else "expert_reply"
             if not is_testimonial_chunk and speaker_role != "expert":
                 source_kind = "dialog"
-        prefix = speaker_text_prefix(
-            role=speaker_role,
-            user=message.from_user,
-            expert_name=str(self.config.EXPERT_NAME or ""),
-        )
-        if live or speaker_role != "expert":
+        if participant_dump:
+            prefix = participant_dump_prefix(message)
+        else:
+            prefix = speaker_text_prefix(
+                role=speaker_role,
+                user=message.from_user,
+                expert_name=str(self.config.EXPERT_NAME or ""),
+            )
+        if dialog_mode or speaker_role != "expert":
             raw_text = f"{prefix}\n{raw_text}"
         tags = ""
-        if not live:
+        if not dialog_mode:
             tags = await extract_content_tags(raw_text)
         source_label = build_source_identifier(message, raw_text, has_file_media)
         date_iso = message_date_iso_utc(message)
@@ -868,7 +900,7 @@ class GroupRagIndexerFeature(BaseFeature):
             apply_source_link_to_metadata(meta, group_link, visibility)
         if is_testimonial_chunk:
             meta.update(testimonial_metadata_overrides())
-        else:
+        elif not participant_dump:
             marked = infer_dialog_role(raw_text, content_category)
             if marked and speaker_role != "expert":
                 meta["role"] = marked

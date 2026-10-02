@@ -14,3 +14,8 @@ reportlab>=4.0.0
 chromadb>=0.4.0
 tiktoken>=0.5.0
 yt-dlp>=2024.0
+# Веб-студия (API внутри процесса бота).
+# Потолок у fastapi важен: с 0.120+ он требует opentelemetry-api>=1.44,
+# а chromadb 1.5.x работает с opentelemetry 1.41 — обновление ломает импорт chromadb.
+fastapi>=0.110.0,<0.120
+uvicorn>=0.29.0

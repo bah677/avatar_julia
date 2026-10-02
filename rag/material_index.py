@@ -312,6 +312,22 @@ class MaterialIndexService:
                 return 0
             return -1
 
+    def delete_cards_by_source(self, source_id: str) -> int:
+        sid = str(source_id or "").strip()
+        if not sid:
+            return 0
+        try:
+            cards = self._store.cards_collection.get(
+                where={"source_id": sid}, include=[]
+            )
+            cids = (cards.get("ids") or []) if cards else []
+            if cids:
+                self._store.cards_collection.delete(ids=cids)
+            return len(cids)
+        except Exception as e:
+            logger.warning("delete_cards_by_source %s: %s", sid, e)
+            return 0
+
     def add_card_document(
         self,
         *,

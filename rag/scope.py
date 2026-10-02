@@ -97,6 +97,10 @@ class RagScope:
         *,
         lesson_key: Optional[str] = None,
         kinds: Optional[Sequence[str]] = None,
+        source_ids: Optional[Sequence[str]] = None,
+        content_category: Optional[str] = None,
+        origin: Optional[str] = None,
+        role: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         extra: Dict[str, Any] | None = None
         clauses: List[dict] = []
@@ -106,6 +110,16 @@ class RagScope:
             klist = [str(x) for x in kinds if str(x).strip()]
             if klist:
                 clauses.append({"source_kind": {"$in": klist}})
+        if source_ids:
+            sids = [str(x).strip() for x in source_ids if str(x).strip()]
+            if sids:
+                clauses.append({"source_id": {"$in": sids}})
+        if content_category:
+            clauses.append({"content_category": str(content_category)})
+        if origin:
+            clauses.append({"origin": str(origin)})
+        if role:
+            clauses.append({"role": str(role)})
         if len(clauses) == 1:
             extra = clauses[0]
         elif len(clauses) > 1:

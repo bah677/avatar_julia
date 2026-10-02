@@ -68,6 +68,7 @@ async def write_draft(
     user_id: int,
     previous: str = "",
     instruction: str = "",
+    retrieved: str = "",
     agents_client=None,
     stories_stage: str = "",
     launch_info: str = "",
@@ -78,6 +79,7 @@ async def write_draft(
 
     spec = get_format(format_id) or get_format("tg_post")
     model = getattr(config, "CONTENT_WRITER_MODEL", "deepseek-v4-flash")
+    max_tokens = int(getattr(config, "CONTENT_WRITER_MAX_TOKENS", 16000) or 16000)
     format_block = format_prompt_block(spec)
     if spec.id == "stories":
         format_block += "\n" + writer_stories_rules(stories_stage)
@@ -97,6 +99,7 @@ async def write_draft(
         task=task,
         previous=previous,
         instruction=instruction,
+        retrieved=retrieved,
     )
     messages = [
         {"role": "system", "content": static},
@@ -109,7 +112,7 @@ async def write_draft(
                 msgs,
                 user_id,
                 temperature=0.7,
-                max_tokens=2500,
+                max_tokens=max_tokens,
                 log_event_type="content_writer",
             )) or ""
         return await llm.complete(
@@ -117,7 +120,7 @@ async def write_draft(
             messages=msgs,
             user_id=user_id,
             temperature=0.7,
-            max_tokens=2500,
+            max_tokens=max_tokens,
             request_kind="content_writer",
         )
 

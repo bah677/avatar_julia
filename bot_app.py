@@ -23,6 +23,7 @@ class BotApplication(TelegramBotApp):
             database_url=bc.database_url,
         )
         self.course_worker = None
+        self.web_studio = None
 
     def _register_features(self) -> None:
         from bot.features.content_studio import ContentStudioFeature

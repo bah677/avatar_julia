@@ -22,8 +22,8 @@ from storage.db.llm_token_normalize import extract_token_counts_and_extras
 logger = logging.getLogger(__name__)
 
 # Таймауты DeepSeek: HTTP-клиент не должен быть короче asyncio.wait_for на запрос.
-_DEEPSEEK_HTTP_TIMEOUT_SEC = 150.0
-_DEEPSEEK_CHAT_WAIT_SEC = 120.0
+_DEEPSEEK_HTTP_TIMEOUT_SEC = 400.0
+_DEEPSEEK_CHAT_WAIT_SEC = 360.0
 _DEEPSEEK_HTML_FORMAT_WAIT_SEC = 120.0
 
 # token_usage / аналитика: дополнительный вызов только для разметки → HTML (DeepSeek).

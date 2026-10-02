@@ -671,32 +671,74 @@ class ContentStudioFeature(BaseFeature):
         stories_stage = normalize_stage(stage_raw if isinstance(stage_raw, str) else "")
         cards = await self._stor().list_cards_by_ids(item.get("card_ids") or [])
         material_parts = []
+        practice_source_ids: list[str] = []
         for c in cards[:3]:
-            material_parts.append(f"### {c.get('title')}\n{c.get('text')}\nЦитата: {c.get('quote') or '—'}")
+            who = "участница" if c.get("speaker") == "participant" else "эксперт"
+            material_parts.append(
+                f"### {c.get('title')} ({who})\n{c.get('text')}\nЦитата: {c.get('quote') or '—'}"
+            )
             src_kind = ""
             if c.get("source_id"):
                 src = await self._stor().get_course_source(c["source_id"])
                 src_kind = (src or {}).get("kind") or ""
-                if src_kind in ("lesson_video", "broadcast") and c.get("anchor_sec") is not None:
+                if src_kind == "practice":
+                    practice_source_ids.append(str(c["source_id"]))
+                if src_kind in ("lesson_video", "broadcast", "practice") and (
+                    c.get("anchor_sec") is not None or c.get("quote")
+                ):
                     tr = source_dir(c["source_id"]) / "transcript.json"
                     if tr.is_file():
                         import json
                         segs = segments_from_dicts(json.loads(tr.read_text())["segments"])
-                        material_parts.append(window_for_card(segs, c, pad_sec=60))
+                        pad = 90.0 if src_kind == "practice" else 60.0
+                        material_parts.append(window_for_card(segs, c, pad_sec=pad))
         if item.get("lesson_id"):
             les = await self._stor().get_course_lesson_by_id(item["lesson_id"])
             if les and les.get("passport_text"):
                 material_parts.append("Паспорт урока:\n" + les["passport_text"][:2500])
-        golden = ""
-        if self._app.rag_stack:
-            gw = scope_from_stack(self._app.rag_stack)
-            hits = gw.golden_examples(item.get("angle") or cards[0]["title"] if cards else "пост", item["format"], k=2)
-            golden = "\n\n".join(
-                (h.get("metadata") or {}).get("answer") or "" for h in hits
-            )
         task = item.get("angle") or "напиши черновик"
         if item.get("goal"):
             task += f"\nЭтап воронки: {item['goal']}"
+        golden = ""
+        retrieved = ""
+        gw = None
+        if self._app.rag_stack:
+            try:
+                gw = scope_from_stack(self._app.rag_stack)
+            except Exception as e:
+                logger.warning("revision RAG scope: %s", e)
+                gw = None
+        if gw is not None:
+            hits = gw.golden_examples(
+                item.get("angle") or cards[0]["title"] if cards else "пост",
+                item["format"],
+                k=2,
+            )
+            golden = "\n\n".join(
+                (h.get("metadata") or {}).get("answer") or "" for h in hits
+            )
+            if (instruction or "").strip() or practice_source_ids:
+                from course.revision_rag import (
+                    retrieve_for_revision,
+                    revision_search_query,
+                    wants_client_voice,
+                )
+
+                q = revision_search_query(
+                    instruction=instruction or task,
+                    task=task,
+                    card_titles=[c.get("title") or "" for c in cards],
+                )
+                source_ids = [str(c["source_id"]) for c in cards if c.get("source_id")]
+                try:
+                    retrieved = retrieve_for_revision(
+                        gw,
+                        query=q,
+                        source_ids=source_ids,
+                        include_testimonials=wants_client_voice(instruction),
+                    )
+                except Exception as e:
+                    logger.warning("revision RAG retrieve: %s", e)
         llm = CourseLLM(self._stor())
         messaging = self._app.feature_manager.get_optional("messaging")
         agents = getattr(messaging, "agents_client", None) if messaging else None
@@ -712,6 +754,7 @@ class ContentStudioFeature(BaseFeature):
             user_id=user_id,
             previous=previous,
             instruction=instruction,
+            retrieved=retrieved,
             agents_client=agents,
             stories_stage=stories_stage,
             launch_info=launch_info[: config.COURSE_INFO_MAX_CHARS],
@@ -813,15 +856,20 @@ class ContentStudioFeature(BaseFeature):
             if les:
                 lesson = f"Урок {les['lesson_key']} «{les.get('title') or ''}»"
         cards = await self._stor().list_content_cards(
-            product_id=src["product_id"], lesson_id=src.get("lesson_id"), limit=8
+            product_id=src["product_id"],
+            source_id=src["id"],
+            limit=8,
+            order_by="score",
         )
         lines = [
-            f"🧩 {product.name} · {src.get('title') or 'Практика'} · {lesson} — {len(cards)} тем для контента"
+            f"🧩 {product.name} · {src.get('title') or 'Практика'} · {lesson} — {len(cards)} тем для контента",
+            "📝 пост · 🎬 рилс · 🎠 карусель",
         ]
         kb_rows = []
         for i, c in enumerate(cards[:6], 1):
             extra = f" (звучал уже на {c.get('frequency')} практиках)" if c.get("frequency", 1) > 1 else ""
-            lines.append(f"{i}. {c.get('type')}: «{c.get('title')}»{extra}")
+            who = "участница" if c.get("speaker") == "participant" else "эксперт"
+            lines.append(f"{i}. {c.get('type')} · {who}: «{c.get('title')}»{extra}")
             kb_rows.append([
                 InlineKeyboardButton(text=f"{i} 📝", callback_data=f"bk:w:{c['id']}:tg_post"),
                 InlineKeyboardButton(text="🎬", callback_data=f"bk:w:{c['id']}:reels"),
@@ -857,36 +905,47 @@ class ContentStudioFeature(BaseFeature):
             if not r.get("lesson_id") and r.get("module_no") is None
         ]
         if not pending:
-            return False
-        lesson_id = None
-        if lesson_key:
-            a, b = lesson_sort_key(lesson_key)
-            lesson_id = await stor.upsert_course_lesson(
-                product_id=pending[0].get("product_id") or active_product_id(),
-                lesson_key=lesson_key,
-                lesson_no=b or a,
-                module_no=a if b else module_no,
-                title="",
-                disk_path=None,
-            )
-        for row in pending:
-            has_text = int(row.get("chars_count") or 0) > 0
-            await stor.update_course_source(
-                row["id"],
-                lesson_id=lesson_id,
-                module_no=None if lesson_id else module_no,
-                status="extracted" if has_text else "new",
-                error_message="",
-                attempts=0,
-                next_attempt_at=None,
-            )
-        n = len(pending)
-        if lesson_key:
-            await message.answer(f"Привязала к уроку {lesson_key}: {n} файл(ов). Обрабатываю.")
-        else:
             await message.answer(
-                f"Привязала к модулю {module_no} целиком: {n} файл(ов). Обрабатываю."
+                "Сейчас нет файлов в ожидании привязки. "
+                "Если файл уже в очереди — напишите /sync или подождите обработку."
             )
+            return True
+        try:
+            lesson_id = None
+            if lesson_key:
+                a, b = lesson_sort_key(lesson_key)
+                lesson_id = await stor.upsert_course_lesson(
+                    product_id=pending[0].get("product_id") or active_product_id(),
+                    lesson_key=lesson_key,
+                    lesson_no=b or a,
+                    module_no=a if b else module_no,
+                    title="",
+                    disk_path=None,
+                )
+            for row in pending:
+                has_text = int(row.get("chars_count") or 0) > 0
+                await stor.update_course_source(
+                    row["id"],
+                    lesson_id=lesson_id,
+                    module_no=None if lesson_id else module_no,
+                    status="extracted" if has_text else "new",
+                    error_message="",
+                    attempts=0,
+                    next_attempt_at=None,
+                )
+            n = len(pending)
+            names = ", ".join((r.get("title") or "файл") for r in pending[:6])
+            if lesson_key:
+                await message.answer(
+                    f"Привязала к уроку {lesson_key}: {n} файл(ов) ({names}). Обрабатываю."
+                )
+            else:
+                await message.answer(
+                    f"Привязала к модулю {module_no} целиком: {n} файл(ов) ({names}). Обрабатываю."
+                )
+        except Exception as e:
+            logger.exception("scope reply: %s", e)
+            await message.answer("Не смогла привязать файл. Попробуйте ещё раз: «модуль 2» или «2.4».")
         return True
 
     async def ask_lesson_for_files(self, items: list) -> None:

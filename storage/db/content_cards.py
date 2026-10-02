@@ -68,23 +68,29 @@ class ContentCardsMixin:
         *,
         product_id: str,
         lesson_id: Optional[int] = None,
+        source_id: Optional[UUID] = None,
         card_type: Optional[str] = None,
         status: str = "active",
         limit: int = 50,
+        order_by: str = "created_at",
     ) -> List[Dict[str, Any]]:
         clauses = ["product_id = $1", "status = $2"]
         args: List[Any] = [product_id, status]
         if lesson_id:
             args.append(int(lesson_id))
             clauses.append(f"lesson_id = ${len(args)}")
+        if source_id:
+            args.append(source_id)
+            clauses.append(f"source_id = ${len(args)}")
         if card_type:
             args.append(card_type)
             clauses.append(f"type = ${len(args)}")
         args.append(max(1, min(200, int(limit))))
+        order_sql = "score DESC, created_at DESC" if order_by == "score" else "created_at DESC"
         sql = f"""
             SELECT * FROM content_cards
              WHERE {' AND '.join(clauses)}
-             ORDER BY created_at DESC
+             ORDER BY {order_sql}
              LIMIT ${len(args)}
         """
         async with self.get_connection() as conn:

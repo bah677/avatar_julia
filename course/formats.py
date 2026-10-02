@@ -57,7 +57,7 @@ FORMATS: Dict[str, FormatSpec] = {
         platform="instagram",
         title="Серия сторис",
         min_chars=150,
-        max_chars=4000,
+        max_chars=12000,
         markup="plain",
         structure=(
             "Лента на день: 8–12 кадров. На каждый кадр — текст на экране (коротко), "

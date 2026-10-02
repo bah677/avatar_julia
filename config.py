@@ -190,6 +190,9 @@ class AppConfig:
     # Живые чаты для чтения переписки (эксперт vs участники). Формат как RAG_GROUPS.
     # Пример: -1003903313717:6 — только топик 6. Пусто = не читать живые чаты.
     RAG_LIVE_CHATS: str = ""
+    # Архив участников (эксперт пишет от их имени): все реплики → role=client.
+    # Формат как RAG_GROUPS. Пример: -1003945188229:193
+    RAG_PARTICIPANT_CHATS: str = ""
     # Топики (message_thread_id), которые никогда не индексировать, во всех RAG-группах.
     RAG_EXCLUDE_TOPIC_IDS: str = ""
     # Группы/топики с отзывами клиентов (формат как RAG_GROUPS). Индексируются в ту же Chroma.
@@ -284,6 +287,7 @@ class AppConfig:
     COURSE_MINING_MODEL: str = "gpt-4o-mini"
     COURSE_PLANNER_MODEL: str = "gpt-4o-mini"
     CONTENT_WRITER_MODEL: str = "deepseek-v4-flash"
+    CONTENT_WRITER_MAX_TOKENS: int = 16000
     STYLE_MODEL: str = "gpt-4o"
     COURSE_LLM_CONCURRENCY: int = 3
     COURSE_CARDS_PER_HOUR: int = 30
@@ -298,6 +302,27 @@ class AppConfig:
     CARD_REUSE_DAYS: int = 60
     COST_TABLE: str = ""
     RAG_CARDS_COLLECTION: str = "content_cards"
+
+    # Веб-студия (FastAPI внутри процесса бота)
+    WEB_ENABLED: bool = False
+    WEB_HOST: str = "127.0.0.1"
+    WEB_PORT: int = 8800
+    WEB_AUTH_TOKEN: str = ""        # аварийный вход по общему коду (WEB_TOKEN_LOGIN=1)
+    WEB_SECRET: str = ""            # подпись сессий и ссылок админов
+    WEB_TOKEN_LOGIN: bool = False   # разрешить вход по WEB_AUTH_TOKEN без Telegram
+    WEB_DOMAIN: str = ""            # публичный адрес студии (для подсказок в логе)
+    WEB_CONTEXT_MAX_CHARS: int = 120_000
+    WEB_SOURCE_MAX_CHARS: int = 60_000
+    WEB_HISTORY_MESSAGES: int = 20
+    WEB_HISTORY_MAX_CHARS: int = 40_000
+    # Конвейер ответа: план поиска → выжимка сырья → генерация
+    WEB_PLANNER_MODEL: str = "gpt-4o-mini"
+    WEB_DISTILL_MODEL: str = "gpt-4o-mini"  # JSON-режим: deepseek на больших куках отдаёт пусто
+    WEB_WRITER_MODEL: str = ""  # пусто → CONTENT_WRITER_MODEL
+    WEB_RAW_INLINE_CHARS: int = 45_000
+    WEB_DISTILL_CHUNK_CHARS: int = 24_000
+    WEB_DISTILL_MAX_CHUNKS: int = 12
+    WEB_RAG_MAX_CHUNKS: int = 14
 
     @property
     def video_host_priority_list(self) -> tuple[str, ...]:
@@ -409,6 +434,11 @@ class AppConfig:
     def rag_live_chats_map(self) -> Dict[int, Optional[frozenset[int]]]:
         """Живые чаты переписки: {chat_id: frozenset(topic_ids) | None}."""
         return _parse_rag_groups(self.RAG_LIVE_CHATS)
+
+    @property
+    def rag_participant_chats_map(self) -> Dict[int, Optional[frozenset[int]]]:
+        """Топики-архивы участников: всегда voice_source=client."""
+        return _parse_rag_groups(self.RAG_PARTICIPANT_CHATS)
 
     @property
     def rag_testimonial_groups_map(self) -> Dict[int, Optional[frozenset[int]]]:
@@ -656,6 +686,7 @@ def load_app_config() -> AppConfig:
         RAG_GROUP_TOPIC_IDS=(os.getenv("RAG_GROUP_TOPIC_IDS") or "").strip(),
         RAG_GROUPS=(os.getenv("RAG_GROUPS") or "").strip(),
         RAG_LIVE_CHATS=(os.getenv("RAG_LIVE_CHATS") or "").strip(),
+        RAG_PARTICIPANT_CHATS=(os.getenv("RAG_PARTICIPANT_CHATS") or "").strip(),
         RAG_EXCLUDE_TOPIC_IDS=(os.getenv("RAG_EXCLUDE_TOPIC_IDS") or "").strip(),
         RAG_TESTIMONIAL_GROUPS=(os.getenv("RAG_TESTIMONIAL_GROUPS") or "").strip(),
         RAG_RETRIEVAL_CONTEXT_USER_TURNS=_safe_int_env(
@@ -816,6 +847,9 @@ def load_app_config() -> AppConfig:
             os.getenv("CONTENT_WRITER_MODEL") or "deepseek-v4-flash"
         ).strip()
         or "deepseek-v4-flash",
+        CONTENT_WRITER_MAX_TOKENS=_safe_int_env(
+            "CONTENT_WRITER_MAX_TOKENS", 16000, min_v=2500, max_v=32000
+        ),
         STYLE_MODEL=(os.getenv("STYLE_MODEL") or "gpt-4o").strip() or "gpt-4o",
         COURSE_LLM_CONCURRENCY=_safe_int_env(
             "COURSE_LLM_CONCURRENCY", 3, min_v=1, max_v=8
@@ -842,6 +876,38 @@ def load_app_config() -> AppConfig:
         COST_TABLE=(os.getenv("COST_TABLE") or "").strip(),
         RAG_CARDS_COLLECTION=(os.getenv("RAG_CARDS_COLLECTION") or "content_cards").strip()
         or "content_cards",
+        WEB_ENABLED=_env_flag_true("WEB_ENABLED", default=False),
+        WEB_HOST=(os.getenv("WEB_HOST") or "127.0.0.1").strip() or "127.0.0.1",
+        WEB_PORT=_safe_int_env("WEB_PORT", 8800, min_v=1, max_v=65535),
+        WEB_AUTH_TOKEN=(os.getenv("WEB_AUTH_TOKEN") or "").strip(),
+        WEB_SECRET=(os.getenv("WEB_SECRET") or "").strip(),
+        WEB_TOKEN_LOGIN=_env_flag_true("WEB_TOKEN_LOGIN", default=False),
+        WEB_DOMAIN=(os.getenv("WEB_DOMAIN") or "").strip(),
+        WEB_CONTEXT_MAX_CHARS=_safe_int_env(
+            "WEB_CONTEXT_MAX_CHARS", 120_000, min_v=4_000, max_v=600_000
+        ),
+        WEB_SOURCE_MAX_CHARS=_safe_int_env(
+            "WEB_SOURCE_MAX_CHARS", 60_000, min_v=2_000, max_v=400_000
+        ),
+        WEB_HISTORY_MESSAGES=_safe_int_env("WEB_HISTORY_MESSAGES", 20, min_v=2, max_v=100),
+        WEB_HISTORY_MAX_CHARS=_safe_int_env(
+            "WEB_HISTORY_MAX_CHARS", 40_000, min_v=2_000, max_v=200_000
+        ),
+        WEB_PLANNER_MODEL=(
+            os.getenv("WEB_PLANNER_MODEL") or os.getenv("COURSE_PLANNER_MODEL") or "gpt-4o-mini"
+        ).strip()
+        or "gpt-4o-mini",
+        WEB_DISTILL_MODEL=(os.getenv("WEB_DISTILL_MODEL") or "gpt-4o-mini").strip()
+        or "gpt-4o-mini",
+        WEB_WRITER_MODEL=(os.getenv("WEB_WRITER_MODEL") or "").strip(),
+        WEB_RAW_INLINE_CHARS=_safe_int_env(
+            "WEB_RAW_INLINE_CHARS", 45_000, min_v=2_000, max_v=400_000
+        ),
+        WEB_DISTILL_CHUNK_CHARS=_safe_int_env(
+            "WEB_DISTILL_CHUNK_CHARS", 24_000, min_v=4_000, max_v=80_000
+        ),
+        WEB_DISTILL_MAX_CHUNKS=_safe_int_env("WEB_DISTILL_MAX_CHUNKS", 12, min_v=1, max_v=60),
+        WEB_RAG_MAX_CHUNKS=_safe_int_env("WEB_RAG_MAX_CHUNKS", 14, min_v=1, max_v=50),
     )
 
 

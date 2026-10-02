@@ -61,6 +61,8 @@ class DiskLayoutTests(unittest.TestCase):
         self.assertEqual(parse_scope_reply("2.4"), ("2.4", 2))
         self.assertEqual(parse_scope_reply("урок 2.4"), ("2.4", 2))
         self.assertEqual(parse_scope_reply("просто текст"), ("", None))
+        self.assertEqual(parse_scope_reply("Модуль 2"), ("", 2))
+        self.assertEqual(parse_scope_reply("модуль 2\n"), ("", 2))
 
     def test_summary_in_lesson_folder(self) -> None:
         role = _role(
